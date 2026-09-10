@@ -417,12 +417,13 @@ td.mono{font-family:var(--mono);font-size:11px}
   </div>
   <div class="card">
     <div class="card-hd">On-deck Slots</div>
-    <p style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.6">We suggest a country x marketplace mix with at least 6 slots per country below USD 10,000 and at least 10 slots per country above that when inventory exists. Suggestions already avoid repeating the same category and zone combination.</p>
+    <p style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.6">Recommended slots follow campaign-objective, ComCat, booking-history, inventory, and CPD rules. Switch to <strong>All slots (manual)</strong> to browse and select the unrestricted catalog; recommendation rules are not applied to manual choices.</p>
     <div class="bbar-wrap" style="margin-bottom:14px">
       <div class="bbar-labels"><span id="preselectionBudgetLeft">Suggested budget utilization</span><span id="preselectionBudgetRight">0%</span></div>
       <div class="bbar-track"><div class="bbar-fill" id="preselectionBudgetFill" style="width:0%"></div></div>
     </div>
-    <div class="fg fg-3" style="margin-bottom:14px">
+    <div class="fg fg-4" style="margin-bottom:14px">
+      <div class="field"><label>Slot list</label><select id="slotBrowseMode" onchange="setSlotBrowseMode(this.value)"><option value="recommended">Recommended</option><option value="manual">All slots (manual)</option></select></div>
       <div class="field"><label>Country filter</label><select id="slotFilterCountry" onchange="renderSlotPreselection()"><option value="">All countries</option></select></div>
       <div class="field"><label>Marketplace filter</label><select id="slotFilterMarketplace" onchange="renderSlotPreselection()"><option value="">All marketplaces</option><option value="core">Core</option><option value="supermall">Supermall</option></select></div>
       <div class="field"><label>Page filter</label><select id="slotFilterPage" onchange="renderSlotPreselection()"><option value="">All pages</option></select></div>
@@ -962,7 +963,7 @@ const S={
   availableSlotCatalog:[],
   manualSlotCatalog:[], budgetPreview:{allocated:0,budget:0,utilization_pct:0}, preselectionInitialized:false,
   offdeckSlots:[], selectedOffdeckSlots:[],
-  slotSuggestions:[], selectedSlots:[], manualFoc:false,
+  slotSuggestions:[], selectedSlots:[], manualFoc:false, slotBrowseMode:'recommended',
   planDiagnostics:{},
   calPage:0,
   picking:false, pickFrom:null,
@@ -1707,19 +1708,6 @@ function sanitizeOnDeckSelections(){
   });
 }
 
-function mergedSuggestionSlots(){
-  sanitizeOnDeckSelections();
-  const merged=[...(S.slotSuggestions||[])];
-  const known=new Set(merged.map(slot=>slot.slot_key));
-  (S.selectedSlots||[]).forEach(slot=>{
-    if(slot?.slot_key && !known.has(slot.slot_key)){
-      merged.push(applySlotPricing(slot,slot.pricing_model));
-      known.add(slot.slot_key);
-    }
-  });
-  return merged;
-}
-
 function offdeckPhaseLabels(slot){
   const phases=slot?.phases||[];
   return phases.length?phases.map(phase=>phase.name||phase).join(', '):'All phases';
@@ -1839,19 +1827,31 @@ function removeSelectedSlot(key){
   renderSlotPreselection();
 }
 
-function toggleSelectedSuggestion(key){
+function setSlotBrowseMode(mode){
+  S.slotBrowseMode=mode==='manual'?'manual':'recommended';
+  renderSlotPreselection();
+}
+
+function browsableOnDeckSlots(){
+  if(S.slotBrowseMode==='manual') return [...(S.manualSlotCatalog||[])];
+  return [...(S.slotSuggestions||[])];
+}
+
+function toggleBrowsableSlot(key){
   const existing=S.selectedSlots.find(slot=>slot.slot_key===key);
   if(existing){
     removeSelectedSlot(key);
     return;
   }
-  const suggestion=S.slotSuggestions.find(slot=>slot.slot_key===key);
-  if(suggestion) upsertSelectedSlot({...suggestion,foc:false,manual:false});
+  const isManual=S.slotBrowseMode==='manual';
+  const source=(isManual?S.manualSlotCatalog:S.slotSuggestions).find(slot=>(slot.slot_key||slotKey(slot.country,slot.slot_code))===key);
+  if(source) upsertSelectedSlot({...source,slot_key:key,foc:false,manual:isManual});
   renderSlotPreselection();
 }
 
-function updateSuggestionPricing(key,pricingModel){
+function updateBrowseSlotPricing(key,pricingModel){
   S.slotSuggestions=S.slotSuggestions.map(slot=>slot.slot_key===key?applySlotPricing(slot,pricingModel):slot);
+  S.manualSlotCatalog=S.manualSlotCatalog.map(slot=>(slot.slot_key||slotKey(slot.country,slot.slot_code))===key?applySlotPricing(slot,pricingModel):slot);
   S.selectedSlots=S.selectedSlots.map(slot=>slot.slot_key===key?applySlotPricing(slot,pricingModel):slot);
   renderSlotPreselection();
 }
@@ -1906,14 +1906,17 @@ function refreshSlotFilters(){
   const countrySel=document.getElementById('slotFilterCountry');
   const pageSel=document.getElementById('slotFilterPage');
   const manualPageSel=document.getElementById('manualSlotPage');
+  const browseMode=document.getElementById('slotBrowseMode');
+  if(browseMode) browseMode.value=S.slotBrowseMode;
+  const browseSlots=browsableOnDeckSlots();
   if(countrySel){
-    const countries=[...new Set(mergedSuggestionSlots().map(s=>s.country).filter(Boolean))];
+    const countries=[...new Set(browseSlots.map(s=>s.country).filter(Boolean))];
     const current=countrySel.value;
     countrySel.innerHTML='<option value="">All countries</option>'+countries.map(v=>`<option value="${v}">${displayCountryCode(v)}</option>`).join('');
     countrySel.value=countries.includes(current)?current:'';
   }
   if(pageSel){
-    const pages=[...new Set(S.slotCatalog.map(s=>s.page).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+    const pages=[...new Set(browseSlots.map(s=>s.page).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
     const current=pageSel.value;
     pageSel.innerHTML='<option value="">All pages</option>'+pages.map(v=>`<option value="${v}">${v}</option>`).join('');
     pageSel.value=pages.includes(current)?current:'';
@@ -1936,7 +1939,7 @@ function renderSlotPreselection(){
   const filterCountry=document.getElementById('slotFilterCountry')?.value||'';
   const filterMarketplace=document.getElementById('slotFilterMarketplace')?.value||'';
   const filterPage=document.getElementById('slotFilterPage')?.value||'';
-  const visibleSuggestions=mergedSuggestionSlots().filter(slot=>{
+  const visibleSuggestions=browsableOnDeckSlots().filter(slot=>{
     if(isOffdeckSlot(slot)) return false;
     if(filterCountry && slot.country!==filterCountry) return false;
     if(filterMarketplace && (slot.marketplace||getSlotMarketplace(slot))!==filterMarketplace) return false;
@@ -1944,24 +1947,28 @@ function renderSlotPreselection(){
     return true;
   });
   suggestionWrap.innerHTML=visibleSuggestions.map(slot=>{
-    const picked=S.selectedSlots.some(item=>item.slot_key===slot.slot_key);
+    const key=slot.slot_key||slotKey(slot.country,slot.slot_code);
+    const picked=S.selectedSlots.some(item=>item.slot_key===key);
+    const isRecommended=S.slotSuggestions.some(item=>item.slot_key===key);
     return `<div class="card" style="margin:0;padding:14px;border-color:${picked?'var(--blue)':'var(--border)'}">
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
         <div>
-          <div style="font-size:13px;font-weight:600">${displayCountryCode(slot.country)} · ${slot.slot_name}</div>
+          <div style="font-size:13px;font-weight:600">${displayCountryCode(slot.country)} · ${slot.slot_name} <span class="country-chip">${isRecommended?'Recommended':'Manual catalog'}</span></div>
           <div class="slot-meta">${slot.slot_code} · ${(slot.marketplace||'').toUpperCase()} · ${slot.page||'Page pending'} · ${String(slot.pricing_model||'CPM').toUpperCase()}</div>
           <div class="slot-meta">${displayCategoryLabel(slot.category)||'No category'}${slot.zone?` · Zone ${slot.zone}`:''}${slot.dimension?` · ${slot.dimension}`:''}</div>
           <div class="slot-meta">${slotInventorySummary(slot)}</div>
         </div>
         <div style="display:flex;flex-direction:column;gap:8px;min-width:122px">
-          <select class="plan-cell-select" onchange="updateSuggestionPricing('${slot.slot_key}',this.value)">
+          <select class="plan-cell-select" onchange="updateBrowseSlotPricing('${key}',this.value)">
             ${pricingOptionsHtml(slot,slot.pricing_model)}
           </select>
-          <button class="btn ${picked?'pri':'ghost'}" type="button" style="padding:7px 12px;font-size:12px" onclick="toggleSelectedSuggestion('${slot.slot_key}')">${picked?'Selected':'Select'}</button>
+          <button class="btn ${picked?'pri':'ghost'}" type="button" style="padding:7px 12px;font-size:12px" onclick="toggleBrowsableSlot('${key}')">${picked?'Selected':'Select'}</button>
         </div>
       </div>
     </div>`;
-  }).join('')||'<div class="empty" style="grid-column:1/-1">No suggestions match the selected filters.</div>';
+  }).join('')||(S.slotBrowseMode==='manual'
+    ? '<div class="empty" style="grid-column:1/-1">No catalog slots match the selected filters.</div>'
+    : '<div class="empty" style="grid-column:1/-1">No recommendations match the selected filters.<br><button class="btn ghost" type="button" style="margin-top:10px" onclick="setSlotBrowseMode(\'manual\')">Browse all slots manually</button></div>');
 
   selectedWrap.innerHTML=(S.selectedSlots||[]).map(slot=>`<div class="phase-item" style="justify-content:space-between">
       <div style="display:flex;gap:10px;align-items:center">
