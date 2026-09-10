@@ -5,6 +5,7 @@ import unittest
 from models import MediaPlanRequest
 from planner import (
     Candidate,
+    MAX_SLOT_BUDGET_SHARE,
     MIN_CPD_BUDGET_USD,
     _date_exposure_weights,
     _objective_diverse_order,
@@ -180,15 +181,17 @@ class PlannerRulesTest(unittest.TestCase):
         self.assertNotIn("needs at least", omitted["reason"])
 
     def test_plan_uses_budget_and_tracks_requested_splits(self):
-        req = self.request()
+        req = self.request(objective="both")
+        req.marketplace_core_pct = 70
+        req.marketplace_supermall_pct = 30
         definitions = [
-            ("home_page_hero", "Home Page", "Home Page"),
-            ("mobile_clp", "CLP", "Mobiles"),
-            ("supermall_home_page_hero", "Home Page", "Home Page"),
-            ("supermall_mobile_clp", "CLP", "Mobiles"),
+            ("home_page_hero", "Home Page", "Home Page", "core"),
+            ("mobile_clp", "CLP", "Mobiles", "core"),
+            ("mall_home_page_hero", "Home Page", "Home Page", "supermall"),
+            ("mall_mobile_clp", "CLP", "Mobiles", "supermall"),
         ]
         historical, meta, inventory = [], {}, []
-        for code, page, category in definitions:
+        for code, page, category, marketplace in definitions:
             historical.append({
                 "country": "ae", "slot_code": code, "views": 1_000_000,
                 "clicks": 10_000, "spends": 10_000, "revenue": 50_000,
@@ -197,14 +200,17 @@ class PlannerRulesTest(unittest.TestCase):
             meta[("ae", code)] = {
                 "slot_code": code, "slot_name": code, "page": page, "category": category,
                 "zone": code, "pricing_options": ["CPM", "CPD"],
-                "cpm_rate": 10, "cpd_rate": 500,
+                "cpm_rate": 10, "cpd_rate": 500, "marketplace": marketplace,
             }
             inventory.extend(
                 {"dt": req.start_date + timedelta(days=i), "country": "ae", "slot_code": code, "available_views": 200_000}
                 for i in range(10)
             )
 
-        req.selected_slot_keys = [f"ae|{code}" for code, _page, _category in definitions]
+        suggestions = suggest_slots(req, historical, inventory, meta, self.settings, limit=4)
+        self.assertTrue(any(slot["marketplace"] == "supermall" for slot in suggestions))
+
+        req.selected_slot_keys = [f"ae|{code}" for code, _page, _category, _marketplace in definitions]
         req.selected_slot_pricing = {key: "CPM" for key in req.selected_slot_keys}
 
         rows, diagnostics = plan_media(req, historical, inventory, meta, self.settings)
@@ -212,9 +218,15 @@ class PlannerRulesTest(unittest.TestCase):
         self.assertTrue(all(row.buyType != "CPD" for row in rows))
         self.assertTrue(any("home" in f"{row.page} {row.category}".lower() for row in rows))
         self.assertTrue(any("clp" in f"{row.page} {row.slot_code}".lower() for row in rows))
+        spend_by_slot = {}
+        for row in rows:
+            key = (row.country, row.slot_code)
+            spend_by_slot[key] = spend_by_slot.get(key, 0) + float(row.cost or 0)
+        self.assertLessEqual(max(spend_by_slot.values()), req.budget * MAX_SLOT_BUDGET_SHARE + 0.01)
         self.assertGreaterEqual(diagnostics["budget_utilization_pct"], 95)
-        self.assertLessEqual(abs(diagnostics["actual_phase_budget_split"]["Launch"] - 30), 5)
-        self.assertLessEqual(abs(diagnostics["actual_marketplace_budget_split"]["core"] - 60), 5)
+        self.assertLessEqual(abs(diagnostics["actual_phase_budget_split"]["Launch"] - 30), 1)
+        self.assertLessEqual(abs(diagnostics["actual_marketplace_budget_split"]["core"] - 70), 1)
+        self.assertLessEqual(abs(diagnostics["actual_objective_budget_split"]["reach"] - 60), 1)
 
 
 if __name__ == "__main__":

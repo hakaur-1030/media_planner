@@ -618,6 +618,7 @@ class BigQueryRepository:
                     "zone": str(get_first(row, "zone") or "").strip(),
                     "dimension": combined_dimension(row),
                     "publisher": str(get_first(row, "publisher") or "").strip(),
+                    "marketplace": str(get_first(row, "marketplace", "market_place") or "").strip().lower(),
                     "type": pricing_model,
                     "pricing_model": pricing_model,
                     "pricing_options": pricing_options,

@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import time
+from uuid import uuid4
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from urllib.request import urlopen
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,6 +28,7 @@ app = FastAPI(title="Noon Media Planner API")
 BRAND_CODES_PATH = Path(__file__).with_name("brand_codes.csv")
 FALLBACK_FX_RATES = {"AED": 3.6725, "SAR": 3.75, "EGP": 50.0}
 FX_CACHE: dict[str, object] = {"expires_at": 0.0, "rates": FALLBACK_FX_RATES.copy()}
+logger = logging.getLogger("media_planner")
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,26 +37,82 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.exception_handler(Exception)
-def unhandled_exception_handler(request: Request, exc: Exception):
+def is_bigquery_error(exc: Exception) -> bool:
     exc_module = type(exc).__module__
     exc_text = str(exc) or type(exc).__name__
-    if (
+    return (
         exc_module.startswith(("google.api_core", "google.cloud.bigquery", "google.auth"))
         or "bigquery" in exc_module.lower()
         or "bigquery" in exc_text.lower()
         or "noonbiadmon." in exc_text.lower()
-    ):
-        return JSONResponse(
-            status_code=503,
-            content={
-                "detail": {
-                    "message": f"BigQuery is not responding or the application could not read/write BigQuery: {exc_text}",
-                    "source": "bigquery",
-                }
-            },
+    )
+
+
+def support_error_response(
+    status_code: int,
+    source: str,
+    message: str,
+    contact: str,
+    reference: str,
+    technical_detail: str = "",
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "detail": {
+                "message": message,
+                "source": source,
+                "contact": contact,
+                "reference": reference,
+                "technical_detail": technical_detail[:2000],
+            }
+        },
+    )
+
+
+@app.exception_handler(RequestValidationError)
+def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    reference = uuid4().hex[:10].upper()
+    logger.warning("Invalid media planner request [%s] path=%s errors=%s", reference, request.url.path, exc.errors())
+    return support_error_response(
+        422,
+        "input",
+        "Some campaign inputs are missing or invalid.",
+        "Media Planning support POC",
+        reference,
+        "; ".join(
+            f"{'.'.join(str(part) for part in error.get('loc', []))}: {error.get('msg', 'invalid value')}"
+            for error in exc.errors()
+        ),
+    )
+
+
+@app.exception_handler(Exception)
+def unhandled_exception_handler(request: Request, exc: Exception):
+    reference = uuid4().hex[:10].upper()
+    logger.error(
+        "Unhandled media planner error [%s] path=%s",
+        reference,
+        request.url.path,
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+    if is_bigquery_error(exc):
+        return support_error_response(
+            503,
+            "bigquery",
+            "BigQuery is not responding or the application cannot access the required BigQuery data.",
+            "Data/BI POC",
+            reference,
+            f"{type(exc).__name__}: {str(exc) or 'No additional detail'}",
         )
-    return JSONResponse(status_code=500, content={"detail": {"message": str(exc) or "Internal Server Error"}})
+    return support_error_response(
+        500,
+        "application",
+        "The Media Planner encountered an unexpected application error.",
+        "Engineering POC",
+        reference,
+        f"{type(exc).__name__}: {str(exc) or 'No additional detail'}",
+    )
 
 
 def get_repo(settings: Settings = Depends(get_settings)) -> BigQueryRepository:
@@ -73,6 +133,22 @@ def plan_failure_message(diagnostics: dict, fallback: str = "No plan rows genera
         )
         return f"No selected slot could be placed. {details}"
     return diagnostics.get("reason") or fallback
+
+
+def strict_split_violations(diagnostics: dict, tolerance_pct: float = 1.0) -> list[str]:
+    violations = []
+    dimensions = (
+        ("phase", diagnostics.get("phase_budget_split") or {}, diagnostics.get("actual_phase_budget_split") or {}),
+        ("marketplace", diagnostics.get("marketplace_budget_split") or {}, diagnostics.get("actual_marketplace_budget_split") or {}),
+        ("objective", diagnostics.get("objective_budget_split") or {}, diagnostics.get("actual_objective_budget_split") or {}),
+    )
+    for dimension, requested, actual in dimensions:
+        for name, target in requested.items():
+            actual_value = float(actual.get(name, 0) or 0)
+            target_value = float(target or 0)
+            if abs(actual_value - target_value) > tolerance_pct:
+                violations.append(f"{dimension} '{name}' requested {target_value:.1f}% but received {actual_value:.1f}%")
+    return violations
 
 
 @lru_cache(maxsize=1)
@@ -208,6 +284,7 @@ def build_available_slots(req: MediaPlanRequest, inventory_rows, slot_meta, incl
                 "zone": str(meta.get("zone") or "").strip(),
                 "dimension": str(meta.get("dimension") or "").strip(),
                 "publisher": str(meta.get("publisher") or "").strip(),
+                "marketplace": str(meta.get("marketplace") or "").strip().lower(),
                 "type": str(meta.get("type") or meta.get("pricing_model") or "CPM").strip(),
                 "pricing_model": str(meta.get("pricing_model") or "CPM").strip(),
                 "pricing_options": list(meta.get("pricing_options") or [str(meta.get("pricing_model") or "CPM").strip()]),
@@ -243,6 +320,27 @@ def merge_manual_slot_inputs(req: MediaPlanRequest, repo: BigQueryRepository, in
             merged_inventory.append(row)
             existing_inventory_keys.add(inventory_key)
     return merged_inventory, merged_meta
+
+
+def refresh_regeneration_selection(req: MediaPlanRequest, suggestions: list[dict]) -> None:
+    excluded = {str(key or "").strip() for key in req.excluded_slot_keys if str(key or "").strip()}
+    retained = [key for key in req.selected_slot_keys if key and key not in excluded]
+    retained_set = set(retained)
+    req.manual_slot_keys = [key for key in req.manual_slot_keys if key in retained_set]
+    req.foc_slot_keys = [key for key in req.foc_slot_keys if key in retained_set]
+    req.selected_slot_pricing = {
+        key: value
+        for key, value in req.selected_slot_pricing.items()
+        if key in retained_set
+    }
+    for slot in suggestions:
+        key = str(slot.get("slot_key") or "").strip()
+        if not key or key in excluded or key in retained_set:
+            continue
+        retained.append(key)
+        retained_set.add(key)
+        req.selected_slot_pricing[key] = str(slot.get("pricing_model") or "CPM")
+    req.selected_slot_keys = retained
 
 
 @app.get("/")
@@ -371,6 +469,12 @@ def create_media_plan(req: MediaPlanRequest, engine: str = "v1", settings: Setti
     diagnostics.update({"selected_comcats": req.comcats, "selected_countries": req.countries, "brand_tag": req.brand_tag, "engine": "v1"})
     if not rows:
         raise HTTPException(status_code=422, detail={"message": plan_failure_message(diagnostics), "diagnostics": diagnostics})
+    split_violations = strict_split_violations(diagnostics)
+    if split_violations:
+        raise HTTPException(status_code=422, detail={
+            "message": "The strict budget split could not be satisfied with the eligible inventory and selected slots: " + "; ".join(split_violations),
+            "diagnostics": diagnostics,
+        })
     diagnostics["roas_refine"] = {
         "applied": False,
         "reason": "skipped to preserve the requested budget, phase, marketplace, comcat, and selected-slot allocation",
@@ -387,21 +491,43 @@ def regenerate_media_plan(plan_id: str, req: MediaPlanRequest, engine: str = "v1
     historical_rows = repo.fetch_historical_performance(req)
     inventory_rows = repo.fetch_inventory(req)
     slot_meta = repo.fetch_slot_meta(req)
+    replacement_req = req.model_copy(deep=True)
+    replacement_req.selected_slot_keys = []
+    replacement_req.manual_slot_keys = []
+    replacement_req.selected_slot_pricing = {}
+    replacement_req.foc_slot_keys = []
+    replacement_suggestions = suggest_slots(
+        replacement_req,
+        historical_rows,
+        inventory_rows,
+        slot_meta,
+        settings,
+        limit=max(len(req.countries), 1) * (6 if req.budget <= 10000 else 10),
+    )
+    refresh_regeneration_selection(req, replacement_suggestions)
     inventory_rows, slot_meta = merge_manual_slot_inputs(req, repo, inventory_rows, slot_meta)
 
     if str(engine).lower() == "v2":
         v2_rows, diagnostics = plan_media_v2(req, historical_rows, inventory_rows, slot_meta, settings)
         rows = to_editable_rows(v2_rows, req)
-        diagnostics.update({"selected_comcats": req.comcats, "selected_countries": req.countries, "brand_tag": req.brand_tag, "engine": "v2", "regenerated": True})
+        diagnostics.update({"selected_comcats": req.comcats, "selected_countries": req.countries, "brand_tag": req.brand_tag, "engine": "v2", "regenerated": True, "regenerated_from": plan_id})
         if not rows:
             raise HTTPException(status_code=422, detail={"message": plan_failure_message(diagnostics, "No plan rows generated for the selected inputs."), "diagnostics": diagnostics})
-        return build_response(req, rows, diagnostics, repo, plan_id=plan_id)
+        # Save regeneration as a new revision. Replacing a plan immediately after
+        # streaming it can make BigQuery reject DELETE against its streaming buffer.
+        return build_response(req, rows, diagnostics, repo)
 
     rows, diagnostics = plan_media(req, historical_rows, inventory_rows, slot_meta, settings)
-    diagnostics.update({"selected_comcats": req.comcats, "selected_countries": req.countries, "brand_tag": req.brand_tag, "engine": "v1", "regenerated": True})
+    diagnostics.update({"selected_comcats": req.comcats, "selected_countries": req.countries, "brand_tag": req.brand_tag, "engine": "v1", "regenerated": True, "regenerated_from": plan_id})
     if not rows:
         raise HTTPException(status_code=422, detail={"message": plan_failure_message(diagnostics), "diagnostics": diagnostics})
-    return build_response(req, rows, diagnostics, repo, plan_id=plan_id)
+    split_violations = strict_split_violations(diagnostics)
+    if split_violations:
+        raise HTTPException(status_code=422, detail={
+            "message": "The strict budget split could not be satisfied with the eligible inventory and selected slots: " + "; ".join(split_violations),
+            "diagnostics": diagnostics,
+        })
+    return build_response(req, rows, diagnostics, repo)
 
 
 @app.get("/api/media-plan/{plan_id}")

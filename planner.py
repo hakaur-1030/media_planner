@@ -176,7 +176,12 @@ def asset_from_slot(slot_code: str, slot_name: str | None) -> str:
     return slot_name or slot_code.replace("_", " ").title()
 
 
-def marketplace_from_slot(slot_code: str, slot_name: str | None) -> str:
+def marketplace_from_slot(slot_code: str, slot_name: str | None, explicit_marketplace: str | None = None) -> str:
+    explicit = str(explicit_marketplace or "").strip().lower().replace(" ", "_")
+    if explicit in {"supermall", "super_mall", "super-mall", "sm"}:
+        return "supermall"
+    if explicit in {"core", "noon", "marketplace"}:
+        return "core"
     return "supermall" if is_supermall(slot_code, slot_name) else "core"
 
 
@@ -196,6 +201,7 @@ HOMEPAGE_PAGE_KEYS = {"home_page", "homepage", "home page", "hp", "home"}
 # Homepage CPD inventory is reserved for campaigns large enough to absorb a
 # meaningful daily placement. CLP/category-page CPD remains eligible below it.
 MIN_CPD_BUDGET_USD = 15_000.0
+MAX_SLOT_BUDGET_SHARE = 0.35
 
 
 def _slot_tokens(slot_code: str, slot_name: str | None) -> list[str]:
@@ -560,6 +566,28 @@ def _allocation_tracks(req: MediaPlanRequest) -> list[tuple[str, float, str]]:
     return [("reach", reach_weight, "visibility_score"), ("conv", roas_weight, "roas_score")]
 
 
+def _weighted_track_sequence(req: MediaPlanRequest, count: int) -> list[tuple[str, float, str]]:
+    tracks = _allocation_tracks(req)
+    if count <= 0 or not tracks:
+        return []
+    quotas = []
+    assigned = 0
+    for index, track in enumerate(tracks):
+        raw_quota = max(float(track[1] or 0), 0.0) * count
+        floor_quota = int(raw_quota)
+        assigned += floor_quota
+        quotas.append([track, floor_quota, raw_quota - floor_quota, index])
+    for quota in sorted(quotas, key=lambda item: (item[2], -item[3]), reverse=True):
+        if assigned >= count:
+            break
+        quota[1] += 1
+        assigned += 1
+    sequence: list[tuple[str, float, str]] = []
+    for track, quota, _fraction, _index in quotas:
+        sequence.extend([track] * quota)
+    return sequence[:count]
+
+
 def _allocation_type(objective: str) -> str:
     return "reach" if normalize_objective(objective) == "visibility" else "conv"
 
@@ -579,6 +607,21 @@ def _marketplace_splits(req: MediaPlanRequest) -> list[tuple[str, float]]:
     if total <= 0:
         return [("core", 0.7), ("supermall", 0.3)]
     return [("core", core_pct / total), ("supermall", supermall_pct / total)]
+
+
+def _weighted_label_sequence(weighted_items: list[tuple[str, float]], count: int) -> list[str]:
+    if count <= 0 or not weighted_items:
+        return []
+    used: dict[str, int] = defaultdict(int)
+    sequence: list[str] = []
+    for position in range(count):
+        label, _weight = max(
+            weighted_items,
+            key=lambda item: (item[1] * (position + 1)) - used[item[0]],
+        )
+        sequence.append(label)
+        used[label] += 1
+    return sequence
 
 
 def _comcat_splits(req: MediaPlanRequest) -> list[tuple[str, float]]:
@@ -694,10 +737,8 @@ def build_candidates(historical_rows: list[dict], slot_meta: dict[tuple[str, str
         slot_code = meta.get("slot_code") or slot_code
         slot_name = meta.get("slot_name")
         if marketplace and marketplace != "both":
-            sm = is_supermall(slot_code, slot_name)
-            if marketplace == "supermall" and not sm:
-                continue
-            if marketplace == "core" and sm:
+            slot_marketplace = marketplace_from_slot(slot_code, slot_name, meta.get("marketplace"))
+            if marketplace != slot_marketplace:
                 continue
 
         cpm = spends * 1000 / views if views > 0 and spends > 0 else None
@@ -846,7 +887,7 @@ def build_candidates(historical_rows: list[dict], slot_meta: dict[tuple[str, str
                     category=meta.get("category") or meta.get("page"),
                     zone=meta.get("zone"),
                     dimension=meta.get("dimension"),
-                    marketplace=marketplace_from_slot(slot_code, slot_name),
+                    marketplace=marketplace_from_slot(slot_code, slot_name, meta.get("marketplace")),
                     publisher=meta.get("publisher") or row.get("publisher"),
                     pricing_model=pricing_model,
                     slot_rate=candidate_slot_rate,
@@ -929,7 +970,7 @@ def expand_candidates_for_countries(
                 candidate
                 for candidate in source_groups.get(signature, [])
                 if candidate.country != country
-                and candidate.marketplace == marketplace_from_slot(slot_code, slot_name)
+                and candidate.marketplace == marketplace_from_slot(slot_code, slot_name, meta.get("marketplace"))
                 and (
                     _slot_comcat_relevance(candidate.category, candidate.slot_code, candidate.slot_name, req) > 0
                     or (target_page_is_relevant and _page_key(candidate.category, candidate.page) == target_page)
@@ -942,7 +983,7 @@ def expand_candidates_for_countries(
                 for candidate in candidates:
                     if candidate.country == country:
                         continue
-                    if candidate.marketplace != marketplace_from_slot(slot_code, slot_name):
+                    if candidate.marketplace != marketplace_from_slot(slot_code, slot_name, meta.get("marketplace")):
                         continue
                     candidate_page = _page_key(candidate.category, candidate.page)
                     candidate_relevance = _slot_comcat_relevance(candidate.category, candidate.slot_code, candidate.slot_name, req)
@@ -981,7 +1022,7 @@ def expand_candidates_for_countries(
                         category=meta.get("category") or meta.get("page"),
                         zone=meta.get("zone"),
                         dimension=meta.get("dimension"),
-                        marketplace=marketplace_from_slot(slot_code, slot_name),
+                        marketplace=marketplace_from_slot(slot_code, slot_name, meta.get("marketplace")),
                         publisher=meta.get("publisher"),
                         pricing_model=pricing_model,
                         slot_rate=slot_rate_for_model(
@@ -1050,7 +1091,7 @@ def ensure_selected_slot_candidates(
         page = meta.get("page")
         category = meta.get("category") or page
         slot_name = meta.get("slot_name")
-        marketplace = marketplace_from_slot(slot_code, slot_name)
+        marketplace = marketplace_from_slot(slot_code, slot_name, meta.get("marketplace"))
 
         source_candidates = [
             candidate
@@ -1396,14 +1437,30 @@ def suggest_slots(
         if candidate
     ]
     country_orders: dict[str, list[str]] = {}
+    requested_countries = [country for country in req.countries if country]
+    desired_per_country = max((limit + max(len(requested_countries), 1) - 1) // max(len(requested_countries), 1), 1)
     for country in [country for country in req.countries if country]:
-        country_orders[country] = [
-            slot_key(candidate.country, candidate.slot_code)
-            for candidate in _objective_diverse_order(
-                [candidate for candidate in representative_candidates if candidate.country == country],
+        marketplace_buckets = {
+            marketplace_name: _objective_diverse_order(
+                [
+                    candidate
+                    for candidate in representative_candidates
+                    if candidate.country == country and candidate.marketplace == marketplace_name
+                ],
                 req.objective,
             )
-        ]
+            for marketplace_name, _share in _marketplace_splits(req)
+        }
+        country_order: list[str] = []
+        for marketplace_name in _weighted_label_sequence(_marketplace_splits(req), desired_per_country):
+            bucket = marketplace_buckets.get(marketplace_name, [])
+            candidate = bucket.pop(0) if bucket else next(
+                (other_bucket.pop(0) for other_bucket in marketplace_buckets.values() if other_bucket),
+                None,
+            )
+            if candidate:
+                country_order.append(slot_key(candidate.country, candidate.slot_code))
+        country_orders[country] = country_order
     ordered_slot_keys: list[str] = []
     max_country_slots = max((len(keys) for keys in country_orders.values()), default=0)
     for index in range(max_country_slots):
@@ -1559,9 +1616,13 @@ def plan_media(
     comcat_splits = _comcat_splits(req)
     phase_splits = _phase_splits(req, phases)
     spent_by_country: dict[str, float] = defaultdict(float)
+    spent_by_slot: dict[str, float] = defaultdict(float)
     append_failures: dict[str, list[str]] = defaultdict(list)
     for row in rows:
-        spent_by_country[row.country] += float(row.cost or row.net_amount or 0)
+        row_spend = float(row.cost or row.net_amount or 0)
+        spent_by_country[row.country] += row_spend
+        if str(row.buyType or "").upper() != "OFF-DECK" and row.slot_code:
+            spent_by_slot[slot_key(row.country, row.slot_code)] += row_spend
 
     def append_row(candidate: Candidate, phase: Phase, stype: str, score_value: float, target_budget: float, force: bool = False, brand_name: str | None = None) -> bool:
         nonlocal line_id, spent_total
@@ -1604,6 +1665,10 @@ def plan_media(
 
         buy_type = candidate.pricing_model
         is_foc = slot_key_value in foc_slot_keys
+        slot_budget_cap = max(req.budget * MAX_SLOT_BUDGET_SHARE, 0)
+        slot_budget_remaining = max(slot_budget_cap - spent_by_slot[slot_key_value], 0)
+        if not is_foc and slot_budget_remaining <= 0:
+            return reject(f"This slot has reached the maximum {MAX_SLOT_BUDGET_SHARE:.0%} share of the on-deck budget.")
         meta = get_slot_meta(slot_meta, candidate.country, candidate.slot_code)
         if buy_type == "CPD":
             if not slot_has_rate_for_model(meta, "CPD", row_from, row_to, settings.default_cpd):
@@ -1618,10 +1683,11 @@ def plan_media(
         rate = discounted_rate(gross_rate, req.discount_pct)
 
         remaining_budget = max(req.budget - spent_total, 0)
-        working_budget = max(min(target_budget, remaining_budget), 0)
+        allocation_remaining = min(remaining_budget, slot_budget_remaining) if not is_foc else remaining_budget
+        working_budget = max(min(target_budget, allocation_remaining), 0)
         if force and buy_type == "CPD":
             one_day_net_rate = discounted_rate(gross_rate, req.discount_pct)
-            working_budget = max(working_budget, min(one_day_net_rate, remaining_budget))
+            working_budget = max(working_budget, min(one_day_net_rate, allocation_remaining))
         if not is_foc and working_budget <= 0 and not force:
             return reject(f"No budget remained for phase '{phase.name}' and marketplace '{candidate.marketplace}'.")
 
@@ -1694,15 +1760,24 @@ def plan_media(
             gross_rate_avg = round(gross_amount / max(exposure_days, 0.0001), 4) if not is_foc else gross_rate
             net_rate_avg = round(net_amount / max(exposure_days, 0.0001), 4) if not is_foc else rate
 
-        if not is_foc and spent_total + net_amount > req.budget:
-            remaining_budget = round(max(req.budget - spent_total, 0), 2)
-            if remaining_budget <= 0 and not force:
-                return reject("The campaign budget was fully allocated before this slot could be placed.")
+        if not is_foc and (
+            spent_total + net_amount > req.budget + 1e-9
+            or spent_by_slot[slot_key_value] + net_amount > slot_budget_cap + 1e-9
+        ):
+            allocation_remaining = round(
+                min(
+                    max(req.budget - spent_total, 0),
+                    max(slot_budget_cap - spent_by_slot[slot_key_value], 0),
+                ),
+                2,
+            )
+            if allocation_remaining <= 0:
+                return reject(f"The campaign budget or this slot's {MAX_SLOT_BUDGET_SHARE:.0%} budget cap was fully allocated.")
             if buy_type == "CPM":
-                capped_views = floor_views_to_block(int(remaining_budget * 1000 / max(rate, 0.01)))
+                capped_views = floor_views_to_block(int(allocation_remaining * 1000 / max(rate, 0.01)))
                 capped_views = min(capped_views, floor_views_to_block(available))
                 if capped_views < settings.min_slot_views:
-                    return reject(f"The remaining USD {remaining_budget:,.2f} cannot buy the minimum {settings.min_slot_views:,}-view CPM block.")
+                    return reject(f"The remaining USD {allocation_remaining:,.2f} within the campaign and per-slot cap cannot buy the minimum {settings.min_slot_views:,}-view CPM block.")
                 planned_views = capped_views
                 gross_amount, net_amount, gross_rate_avg, net_rate_avg = _cpm_row_pricing(
                     meta,
@@ -1715,7 +1790,10 @@ def plan_media(
                 )
                 if gross_amount <= 0 and net_amount <= 0:
                     return reject("CPM pricing produced a zero amount after applying the remaining-budget cap.")
-                while planned_views >= settings.min_slot_views and spent_total + net_amount > req.budget:
+                while planned_views >= settings.min_slot_views and (
+                    spent_total + net_amount > req.budget + 1e-9
+                    or spent_by_slot[slot_key_value] + net_amount > slot_budget_cap + 1e-9
+                ):
                     planned_views -= 100
                     gross_amount, net_amount, gross_rate_avg, net_rate_avg = _cpm_row_pricing(
                         meta,
@@ -1726,8 +1804,8 @@ def plan_media(
                         req.discount_pct,
                         settings.default_cpm,
                     )
-                if planned_views < settings.min_slot_views or spent_total + net_amount > req.budget:
-                    return reject(f"The slot could not fit within the remaining campaign budget of USD {remaining_budget:,.2f}.")
+                if planned_views < settings.min_slot_views or spent_total + net_amount > req.budget + 1e-9 or spent_by_slot[slot_key_value] + net_amount > slot_budget_cap + 1e-9:
+                    return reject(f"The slot could not fit within the remaining USD {allocation_remaining:,.2f} allowed by the campaign and 35% slot cap.")
             else:
                 cpd_days = list(iter_dates(row_from, row_to))
                 cpd_weights = _date_exposure_weights(row_from, row_to)
@@ -1739,14 +1817,14 @@ def plan_media(
                     daily_gross_rate = float((meta.get("cpd_rate_schedule") or {}).get(day.isoformat()) or gross_rate)
                     daily_gross_amount = daily_gross_rate * exposure_weight
                     daily_net_rate = discounted_rate(daily_gross_rate, req.discount_pct) * exposure_weight
-                    if net_amount + daily_net_rate > remaining_budget + 1e-9:
+                    if net_amount + daily_net_rate > allocation_remaining + 1e-9:
                         break
                     gross_amount += daily_gross_amount
                     net_amount += daily_net_rate
                     fitted_days += 1
                     exposure_days += exposure_weight
                 if fitted_days <= 0:
-                    return reject(f"The remaining USD {remaining_budget:,.2f} cannot buy the first CPD flight segment.")
+                    return reject(f"The remaining USD {allocation_remaining:,.2f} within the campaign and per-slot cap cannot buy the first CPD flight segment.")
                 row_to = row_from.fromordinal(row_from.toordinal() + fitted_days - 1)
                 days = campaign_duration_days(row_from, row_to)
                 planned_views = min(available, int(candidate.views / max(candidate.active_days, 1) * exposure_days)) or None
@@ -1796,6 +1874,7 @@ def plan_media(
         )
         line_id += 1
         spent_total += net_amount
+        spent_by_slot[slot_key_value] += net_amount
         used_slot_phases.add((slot_key_value, phase.name))
         inventory_by_slot_phase[exact_inventory_key] = max(inventory_by_slot_phase[exact_inventory_key] - int(planned_views or 0), 0)
         return True
@@ -1834,24 +1913,27 @@ def plan_media(
         return (comcat_name, share)
 
     selected_phase_sequence = _weighted_phase_sequence(phases, phase_splits, len(selected_slot_key_list))
+    selected_track_sequence = _weighted_track_sequence(req, len(selected_slot_key_list))
     selected_allocations: list[dict] = []
-    selected_bucket_counts: dict[tuple[str, str, str, str, str], int] = defaultdict(int)
-    selected_bucket_targets: dict[tuple[str, str, str, str, str], float] = defaultdict(float)
+    selected_bucket_counts: dict[tuple[str, str, str, str, str, str], int] = defaultdict(int)
+    selected_bucket_targets: dict[tuple[str, str, str, str, str, str], float] = defaultdict(float)
     for index, selected_key in enumerate(selected_slot_key_list):
         candidate = selected_candidate_for_key(selected_key)
         if not candidate:
             continue
         brand_name, brand_share = brand_splits[index % len(brand_splits)]
         phase = selected_phase_sequence[index] if index < len(selected_phase_sequence) else phases[index % len(phases)]
+        stype, objective_share, score_name = selected_track_sequence[index] if index < len(selected_track_sequence) else _allocation_tracks(req)[0]
         country_share = 1.0 / max(len(countries), 1)
         comcat_name, comcat_share = comcat_bucket_for(candidate)
-        bucket_key = (candidate.country, str(brand_name or ""), phase.name, candidate.marketplace, comcat_name)
+        bucket_key = (candidate.country, str(brand_name or ""), phase.name, candidate.marketplace, comcat_name, stype)
         bucket_target = req.budget * (
             max(country_share, 0.01)
             * max(brand_share, 0.01)
             * max(phase_splits.get(phase.name, 0), 0.01)
             * max(marketplace_share_for(candidate), 0.01)
             * max(comcat_share, 0.01)
+            * max(objective_share, 0.01)
         )
         selected_bucket_counts[bucket_key] += 1
         selected_bucket_targets[bucket_key] = max(selected_bucket_targets[bucket_key], bucket_target)
@@ -1862,15 +1944,16 @@ def plan_media(
                 "brand_name": brand_name,
                 "brand_share": brand_share,
                 "phase": phase,
+                "stype": stype,
+                "score_name": score_name,
                 "bucket_key": bucket_key,
             }
         )
     selected_target_total = sum(selected_bucket_targets.values())
-    # Preselected slots must appear, but committing the entire budget in this
-    # first pass can lock in coarse phase quotas (for example, 1 of 4 selected
-    # slots in a 30% launch phase).  Reserve 20% for the split-aware allocator
-    # and CPM balancing pass below.
-    selected_scale = ((req.budget * 0.8) / selected_target_total) if selected_target_total > 0 else 1.0
+    # Preselected slots must appear, but this pass is only for representation.
+    # Keep most spend available for the split-aware phase/marketplace/objective
+    # allocator below so a coarse number of selections cannot dominate a target.
+    selected_scale = ((req.budget * 0.2) / selected_target_total) if selected_target_total > 0 else 1.0
     selected_budget_by_key: dict[tuple[str, str, str], float] = {}
     for item in selected_allocations:
         bucket_key = item["bucket_key"]
@@ -1886,7 +1969,6 @@ def plan_media(
         row_model = normalize_pricing_model(getattr(row, "buyType", ""))
         return row_model == requested_model
 
-    selected_type = _allocation_type(req.objective)
     for item in selected_allocations:
         selected_key = str(item["key"])
         if any(
@@ -1901,8 +1983,8 @@ def plan_media(
         brand_name = str(item["brand_name"] or req.brand)
         phase = item["phase"]
         target_budget = selected_budget_by_key.get((selected_key, phase.name, brand_name), req.budget / max(len(selected_allocations), 1))
-        selected_score = _candidate_score(candidate, req.objective)
-        append_row(candidate, phase, selected_type, selected_score, target_budget, force=True, brand_name=brand_name)
+        selected_score = float(getattr(candidate, item["score_name"]))
+        append_row(candidate, phase, item["stype"], selected_score, target_budget, force=True, brand_name=brand_name)
 
     for country in countries:
         country_candidates = [c for c in candidates if c.country == country]
@@ -2040,51 +2122,61 @@ def plan_media(
             break
         phase_spend = defaultdict(float)
         marketplace_spend = defaultdict(float)
+        objective_spend = defaultdict(float)
         for existing_row in rows:
             if str(existing_row.buyType or "").upper() == "OFF-DECK":
                 continue
             row_spend = float(existing_row.cost or existing_row.net_amount or 0)
             phase_spend[existing_row.phase] += row_spend
             marketplace_spend[existing_row.marketplace] += row_spend
+            objective_spend[existing_row.stype] += row_spend
 
-        eligible_rows: list[tuple[float, EditablePlanLine, int, float]] = []
+        eligible_rows: list[tuple[float, EditablePlanLine, int, float, float]] = []
         marketplace_share_map = dict(marketplace_splits)
+        objective_share_map = {stype: share for stype, share, _score_name in _allocation_tracks(req)}
         for existing_row in rows:
             if normalize_pricing_model(existing_row.buyType) != "CPM" or existing_row.manual or existing_row.locked:
                 continue
             inventory_key = (existing_row.country, existing_row.slot_code, existing_row.phase)
             remaining_views = floor_views_to_block(inventory_by_slot_phase.get(inventory_key, 0))
             net_cpm = float(existing_row.net_cpm or existing_row.rate or 0)
-            if remaining_views < 100 or net_cpm <= 0 or remaining_budget + 1e-9 < net_cpm * 0.1:
+            existing_slot_key = slot_key(existing_row.country, existing_row.slot_code)
+            slot_budget_remaining = round(max(req.budget * MAX_SLOT_BUDGET_SHARE - spent_by_slot[existing_slot_key], 0), 2)
+            if remaining_views < 100 or net_cpm <= 0 or min(remaining_budget, slot_budget_remaining) + 1e-9 < net_cpm * 0.1:
                 continue
             phase_target = req.budget * phase_splits.get(existing_row.phase, 0)
             marketplace_target = req.budget * marketplace_share_map.get(existing_row.marketplace, 0)
+            objective_target = req.budget * objective_share_map.get(existing_row.stype, 0)
             phase_gap = phase_target - phase_spend[existing_row.phase]
             marketplace_gap = marketplace_target - marketplace_spend[existing_row.marketplace]
+            objective_gap = objective_target - objective_spend[existing_row.stype]
             deficit_score = (
                 phase_gap / max(phase_target, 1.0)
                 + marketplace_gap / max(marketplace_target, 1.0)
+                + objective_gap / max(objective_target, 1.0)
             )
-            eligible_rows.append((deficit_score, existing_row, remaining_views, net_cpm))
+            eligible_rows.append((deficit_score, existing_row, remaining_views, net_cpm, slot_budget_remaining))
         if not eligible_rows:
             break
 
-        _deficit_score, row_to_grow, capacity_views, net_cpm = max(
+        _deficit_score, row_to_grow, capacity_views, net_cpm, slot_budget_remaining = max(
             eligible_rows,
             key=lambda item: (item[0], item[1].score, item[2]),
         )
         phase_target = req.budget * phase_splits.get(row_to_grow.phase, 0)
         marketplace_target = req.budget * marketplace_share_map.get(row_to_grow.marketplace, 0)
+        objective_target = req.budget * objective_share_map.get(row_to_grow.stype, 0)
         positive_gaps = [
             gap
             for gap in (
                 phase_target - phase_spend[row_to_grow.phase],
                 marketplace_target - marketplace_spend[row_to_grow.marketplace],
+                objective_target - objective_spend[row_to_grow.stype],
             )
             if gap > 0.01
         ]
         desired_spend = min(positive_gaps) if positive_gaps else remaining_budget
-        desired_spend = min(max(desired_spend, net_cpm * 0.1), remaining_budget)
+        desired_spend = min(max(desired_spend, net_cpm * 0.1), remaining_budget, slot_budget_remaining)
         affordable_views = floor_views_to_block(int(desired_spend * 1000 / net_cpm))
         added_views = min(capacity_views, affordable_views)
         if added_views < 100:
@@ -2104,8 +2196,67 @@ def plan_media(
         inventory_key = (row_to_grow.country, row_to_grow.slot_code, row_to_grow.phase)
         inventory_by_slot_phase[inventory_key] = max(inventory_by_slot_phase.get(inventory_key, 0) - added_views, 0)
         spent_total = round(spent_total + added_net, 2)
+        spent_by_slot[slot_key(row_to_grow.country, row_to_grow.slot_code)] = round(
+            spent_by_slot[slot_key(row_to_grow.country, row_to_grow.slot_code)] + added_net,
+            2,
+        )
         topup_added = round(topup_added + added_net, 2)
         topup_iterations += 1
+
+    # Objective is an allocation label rather than a different inventory pool.
+    # Split paid rows when needed so Balanced plans match the requested
+    # Reach/ROAS spend ratio without disturbing phase or marketplace totals.
+    allocation_tracks = _allocation_tracks(req)
+    if len(allocation_tracks) > 1:
+        paid_rows = [
+            row
+            for row in rows
+            if str(row.buyType or "").upper() != "OFF-DECK" and float(row.cost or row.net_amount or 0) > 0
+        ]
+        paid_total = round(sum(float(row.cost or row.net_amount or 0) for row in paid_rows), 2)
+        for target_stype, target_share, _score_name in allocation_tracks[:-1]:
+            desired_spend = round(paid_total * target_share, 2)
+            current_spend = round(
+                sum(float(row.cost or row.net_amount or 0) for row in paid_rows if row.stype == target_stype),
+                2,
+            )
+            deficit = round(desired_spend - current_spend, 2)
+            if deficit <= 0.01:
+                continue
+            donors = sorted(
+                [row for row in paid_rows if row.stype != target_stype],
+                key=lambda row: float(row.cost or row.net_amount or 0),
+                reverse=True,
+            )
+            for donor in donors:
+                if deficit <= 0.01:
+                    break
+                donor_net = round(float(donor.cost or donor.net_amount or 0), 2)
+                if donor_net <= 0:
+                    continue
+                transfer_net = round(min(deficit, donor_net), 2)
+                if transfer_net >= donor_net - 0.01:
+                    donor.stype = target_stype
+                    deficit = round(deficit - donor_net, 2)
+                    continue
+                ratio = transfer_net / donor_net
+                split_row = donor.model_copy(deep=True)
+                split_row.id = line_id
+                line_id += 1
+                split_row.stype = target_stype
+                split_row.cost = transfer_net
+                split_row.net_amount = transfer_net
+                split_row.gross_amount = round(float(donor.gross_amount or 0) * ratio, 2)
+                if donor.views:
+                    split_views = max(min(int(round(donor.views * ratio)), donor.views), 1)
+                    split_row.views = split_views
+                    donor.views = max(int(donor.views) - split_views, 0)
+                donor.cost = round(donor_net - transfer_net, 2)
+                donor.net_amount = donor.cost
+                donor.gross_amount = round(max(float(donor.gross_amount or 0) - float(split_row.gross_amount or 0), 0), 2)
+                rows.append(split_row)
+                paid_rows.append(split_row)
+                deficit = round(deficit - transfer_net, 2)
 
     final_selected_keys = {
         selected_key
@@ -2250,11 +2401,13 @@ def plan_media(
     actual_phase_spend: dict[str, float] = defaultdict(float)
     actual_country_spend: dict[str, float] = defaultdict(float)
     actual_comcat_spend: dict[str, float] = defaultdict(float)
+    actual_objective_spend: dict[str, float] = defaultdict(float)
     for row in on_deck_rows:
         row_spend = float(row.cost or row.net_amount or 0)
         actual_marketplace_spend[row.marketplace or "unknown"] += row_spend
         actual_phase_spend[row.phase or "unknown"] += row_spend
         actual_country_spend[row.country or "unknown"] += row_spend
+        actual_objective_spend[row.stype or "unknown"] += row_spend
         matched_comcats = [
             (comcat_name, _row_relevance_for_comcat(row, comcat_name))
             for comcat_name, _share in comcat_splits
@@ -2280,6 +2433,7 @@ def plan_media(
         "budget_utilization_pct": round((on_deck_total / req.budget) * 100, 2) if req.budget > 0 else 0.0,
         "budget_topup_added": topup_added,
         "budget_utilization_target_pct": 95.0,
+        "maximum_slot_budget_share_pct": round(MAX_SLOT_BUDGET_SHARE * 100, 2),
         "homepage_cpd_minimum_budget_usd": MIN_CPD_BUDGET_USD,
         "per_country_min": per_country_min,
         "countries": countries,
@@ -2288,10 +2442,12 @@ def plan_media(
         "marketplace_budget_split": {name: round(share * 100, 2) for name, share in marketplace_splits},
         "comcat_budget_split": {name: round(share * 100, 2) for name, share in comcat_splits if name},
         "phase_budget_split": {name: round(share * 100, 2) for name, share in phase_splits.items()},
+        "objective_budget_split": {stype: round(share * 100, 2) for stype, share, _score_name in _allocation_tracks(req)},
         "actual_country_budget_split": actual_pct_split(dict(actual_country_spend)),
         "actual_marketplace_budget_split": actual_pct_split(dict(actual_marketplace_spend)),
         "actual_comcat_budget_split": actual_pct_split(dict(actual_comcat_spend)),
         "actual_phase_budget_split": actual_pct_split(dict(actual_phase_spend)),
+        "actual_objective_budget_split": actual_pct_split(dict(actual_objective_spend)),
         "country_row_counts": {country: len([row for row in rows if row.country == country and (row.slot_code or "").strip()]) for country in countries},
         "omitted_selected_slots": omitted_selected_slots,
     }
