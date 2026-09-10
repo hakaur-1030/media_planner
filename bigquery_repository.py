@@ -268,6 +268,17 @@ def infer_pricing_model_from_slot(slot_code: str, slot_name: str | None = None) 
     return "CPM"
 
 
+def is_homepage_slot(row: dict, slot_code: str, slot_name: str) -> bool:
+    values = (slot_code, slot_name, get_first(row, "category", "page", "publisher"))
+    for value in values:
+        normalized = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
+        if normalized in {"home", "hp", "home_page", "homepage"}:
+            return True
+        if re.search(r"(^|_)(home_page|homepage|hp)($|_)", normalized):
+            return True
+    return False
+
+
 def pricing_options_from_values(cpm_value, cpd_value) -> list[str]:
     options = []
     if parse_number(cpm_value) > 0:
@@ -571,7 +582,14 @@ class BigQueryRepository:
                     continue
             rate_meta = rate_by_country_slot.get((country, normalized_slot_code)) or rate_by_slot.get(normalized_slot_code) or {}
             pricing_model = normalize_pricing_model(get_first(row, "type", "pricing_type", "buy_type", "pricing_model") or infer_pricing_model_from_slot(slot_code, slot_name))
-            if enforce_eligibility and pricing_model == "CPD" and (exclude_cpd_by_budget or (country, normalized_slot_code) in cpd_blocked_slot_keys):
+            if (
+                enforce_eligibility
+                and pricing_model == "CPD"
+                and (
+                    (exclude_cpd_by_budget and is_homepage_slot(row, slot_code, slot_name))
+                    or (country, normalized_slot_code) in cpd_blocked_slot_keys
+                )
+            ):
                 continue
             has_rate_card = bool(
                 rate_meta

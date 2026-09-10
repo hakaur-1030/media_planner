@@ -79,7 +79,7 @@ class PlannerRulesTest(unittest.TestCase):
         self.assertGreater(_slot_values_relevance_for_comcat("Mobiles", "CLP", "mobile_clp", "Mobile CLP", "Mobiles"), 0)
         self.assertEqual(_slot_values_relevance_for_comcat("Cameras", "CLP", "camera_clp", "Camera CLP", "Mobiles"), 0)
 
-    def test_cpd_is_not_suggested_below_threshold(self):
+    def test_clp_cpd_is_allowed_below_threshold(self):
         req = self.request(MIN_CPD_BUDGET_USD - 1)
         historical = [{
             "country": "ae", "slot_code": "mobile_clp", "views": 100_000,
@@ -96,9 +96,28 @@ class PlannerRulesTest(unittest.TestCase):
         ]
         suggestions = suggest_slots(req, historical, inventory, meta, self.settings)
         self.assertTrue(suggestions)
+        self.assertIn("CPD", suggestions[0]["pricing_options"])
+
+    def test_homepage_cpd_is_not_suggested_below_threshold(self):
+        req = self.request(MIN_CPD_BUDGET_USD - 1)
+        historical = [{
+            "country": "ae", "slot_code": "home_page_hero", "views": 100_000,
+            "clicks": 1_000, "spends": 1_000, "revenue": 5_000, "active_days": 10,
+        }]
+        meta = {("ae", "home_page_hero"): {
+            "slot_code": "home_page_hero", "slot_name": "Homepage Hero", "page": "Home Page",
+            "category": "Home Page", "zone": "top", "pricing_options": ["CPM", "CPD"],
+            "cpm_rate": 10, "cpd_rate": 500,
+        }}
+        inventory = [
+            {"dt": req.start_date + timedelta(days=i), "country": "ae", "slot_code": "home_page_hero", "available_views": 100_000}
+            for i in range(10)
+        ]
+        suggestions = suggest_slots(req, historical, inventory, meta, self.settings)
+        self.assertTrue(suggestions)
         self.assertEqual(suggestions[0]["pricing_options"], ["CPM"])
 
-    def test_manual_slot_can_override_backend_category_and_cpd_rules(self):
+    def test_manual_slot_can_override_backend_category_rules(self):
         req = self.request(10_000)
         key = "ae|camera_manual_cpd"
         req.selected_slot_keys = [key]
@@ -111,6 +130,25 @@ class PlannerRulesTest(unittest.TestCase):
         }}
         inventory = [
             {"dt": req.start_date + timedelta(days=i), "country": "ae", "slot_code": "camera_manual_cpd", "available_views": 50_000}
+            for i in range(10)
+        ]
+        rows, _diagnostics = plan_media(req, [], inventory, meta, self.settings)
+        self.assertTrue(rows)
+        self.assertEqual(rows[0].buyType, "CPD")
+
+    def test_manual_homepage_cpd_can_override_budget_threshold(self):
+        req = self.request(MIN_CPD_BUDGET_USD - 1)
+        key = "ae|home_page_manual_cpd"
+        req.selected_slot_keys = [key]
+        req.manual_slot_keys = [key]
+        req.selected_slot_pricing = {key: "CPD"}
+        meta = {("ae", "home_page_manual_cpd"): {
+            "slot_code": "home_page_manual_cpd", "slot_name": "Homepage manual CPD",
+            "page": "Home Page", "category": "Home Page", "zone": "manual",
+            "pricing_options": ["CPD"], "cpd_rate": 500,
+        }}
+        inventory = [
+            {"dt": req.start_date + timedelta(days=i), "country": "ae", "slot_code": "home_page_manual_cpd", "available_views": 50_000}
             for i in range(10)
         ]
         rows, _diagnostics = plan_media(req, [], inventory, meta, self.settings)

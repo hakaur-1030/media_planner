@@ -191,8 +191,10 @@ GENERIC_PAGE_KEYS = {
     "presearch", "search", "search_page", "search page",
 }
 
-# CPD inventory is deliberately reserved for campaigns large enough to absorb a
-# meaningful daily placement without distorting the requested allocation splits.
+HOMEPAGE_PAGE_KEYS = {"home_page", "homepage", "home page", "hp", "home"}
+
+# Homepage CPD inventory is reserved for campaigns large enough to absorb a
+# meaningful daily placement. CLP/category-page CPD remains eligible below it.
 MIN_CPD_BUDGET_USD = 15_000.0
 
 
@@ -1299,7 +1301,11 @@ def _placement_kind(candidate: Candidate) -> str:
         for value in values
         if str(value or "").strip()
     }
-    if any(value in GENERIC_PAGE_KEYS or value in {"hp", "home"} for value in normalized_values):
+    if any(
+        value in HOMEPAGE_PAGE_KEYS
+        or re.search(r"(^|_)(home_page|homepage|hp)($|_)", value)
+        for value in normalized_values
+    ):
         return "homepage"
     if any(re.search(r"(^|_)(clp|plp|category|salepage)($|_)", value) for value in normalized_values):
         return "clp"
@@ -1366,7 +1372,11 @@ def suggest_slots(
     candidates = [
         candidate
         for candidate in candidates
-        if (req.budget >= MIN_CPD_BUDGET_USD or candidate.pricing_model != "CPD")
+        if (
+            req.budget >= MIN_CPD_BUDGET_USD
+            or candidate.pricing_model != "CPD"
+            or _placement_kind(candidate) != "homepage"
+        )
         and (not req.comcats or any(_slot_relevance_for_comcat(candidate, comcat) > 0 for comcat in req.comcats))
     ]
     inventory = _inventory_by_slot_phase(req, inventory_rows)
@@ -1486,7 +1496,11 @@ def plan_media(
         for candidate in candidates
         if slot_key(candidate.country, candidate.slot_code).lower() in manual_slot_keys
         or (
-            (req.budget >= MIN_CPD_BUDGET_USD or candidate.pricing_model != "CPD")
+            (
+                req.budget >= MIN_CPD_BUDGET_USD
+                or candidate.pricing_model != "CPD"
+                or _placement_kind(candidate) != "homepage"
+            )
             and (not req.comcats or any(_slot_relevance_for_comcat(candidate, comcat) > 0 for comcat in req.comcats))
         )
     ]
@@ -2266,7 +2280,7 @@ def plan_media(
         "budget_utilization_pct": round((on_deck_total / req.budget) * 100, 2) if req.budget > 0 else 0.0,
         "budget_topup_added": topup_added,
         "budget_utilization_target_pct": 95.0,
-        "cpd_minimum_budget_usd": MIN_CPD_BUDGET_USD,
+        "homepage_cpd_minimum_budget_usd": MIN_CPD_BUDGET_USD,
         "per_country_min": per_country_min,
         "countries": countries,
         "marketplace": req.marketplace,
