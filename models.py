@@ -85,6 +85,7 @@ class MediaPlanRequest(BaseModel):
     phases: list[Phase] = Field(default_factory=list)
     phase_budget_splits: dict[str, float] = Field(default_factory=dict)
     selected_slot_keys: list[str] = Field(default_factory=list)
+    manual_slot_keys: list[str] = Field(default_factory=list)
     selected_slot_pricing: dict[str, str] = Field(default_factory=dict)
     foc_slot_keys: list[str] = Field(default_factory=list)
     selected_offdeck_slots: list[dict] = Field(default_factory=list)

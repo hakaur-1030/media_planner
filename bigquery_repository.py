@@ -229,6 +229,17 @@ def parse_number(value) -> float:
         return 0.0
 
 
+def flight_date_fraction(dt: date, start: date, end: date) -> float:
+    """Share of a calendar date covered by a 09:00-to-09:00 flight."""
+    if start == end:
+        return 1.0
+    if dt == start:
+        return 15 / 24
+    if dt == end:
+        return 9 / 24
+    return 1.0
+
+
 def text_tokens(value: str) -> set[str]:
     return {
         token
@@ -529,7 +540,7 @@ class BigQueryRepository:
         self._recent_booking_cache[cache_key] = result
         return result
 
-    def fetch_slot_catalog(self, req: MediaPlanRequest | None = None) -> list[dict]:
+    def fetch_slot_catalog(self, req: MediaPlanRequest | None = None, enforce_eligibility: bool = True) -> list[dict]:
         rows = self._query_records(f"SELECT * FROM `{self.settings.slot_data_table}`")
         rate_by_country_slot: dict[tuple[str, str], dict] = {}
         rate_by_slot: dict[str, dict] = {}
@@ -538,9 +549,10 @@ class BigQueryRepository:
         exclude_cpd_by_budget = False
         if req is not None:
             rate_by_country_slot, rate_by_slot = self._fetch_rate_card_map(req.start_date, req.end_date)
-            cpd_blocked_slot_keys = self._fetch_booked_cpd_slot_keys(req)
-            recent_booked_views = self._fetch_recent_booked_views(req)
-            exclude_cpd_by_budget = float(getattr(req, "budget", 0) or 0) < 15000
+            if enforce_eligibility:
+                cpd_blocked_slot_keys = self._fetch_booked_cpd_slot_keys(req)
+                recent_booked_views = self._fetch_recent_booked_views(req)
+                exclude_cpd_by_budget = float(getattr(req, "budget", 0) or 0) < 15000
         catalog = []
         for row in rows:
             slot_code = str(get_first(row, "slot_code", "slot") or "").strip()
@@ -559,7 +571,7 @@ class BigQueryRepository:
                     continue
             rate_meta = rate_by_country_slot.get((country, normalized_slot_code)) or rate_by_slot.get(normalized_slot_code) or {}
             pricing_model = normalize_pricing_model(get_first(row, "type", "pricing_type", "buy_type", "pricing_model") or infer_pricing_model_from_slot(slot_code, slot_name))
-            if pricing_model == "CPD" and (exclude_cpd_by_budget or (country, normalized_slot_code) in cpd_blocked_slot_keys):
+            if enforce_eligibility and pricing_model == "CPD" and (exclude_cpd_by_budget or (country, normalized_slot_code) in cpd_blocked_slot_keys):
                 continue
             has_rate_card = bool(
                 rate_meta
@@ -602,13 +614,16 @@ class BigQueryRepository:
             )
         return catalog
 
-    def fetch_slot_meta(self, req: MediaPlanRequest | None = None) -> dict[tuple[str, str], dict]:
-        return {(row["country"], row["slot_code"]): row for row in self.fetch_slot_catalog(req)}
+    def fetch_slot_meta(self, req: MediaPlanRequest | None = None, enforce_eligibility: bool = True) -> dict[tuple[str, str], dict]:
+        return {
+            (row["country"], row["slot_code"]): row
+            for row in self.fetch_slot_catalog(req, enforce_eligibility=enforce_eligibility)
+        }
 
-    def fetch_offdeck_slots(self, req: MediaPlanRequest | None = None) -> list[dict]:
+    def fetch_offdeck_slots(self, req: MediaPlanRequest | None = None, enforce_eligibility: bool = True) -> list[dict]:
         rows = self._query_records(f"SELECT * FROM `{self.settings.offdeck_slots_table}`")
         countries = country_values(req.countries) if req is not None else set()
-        recent_booked_views = self._fetch_recent_booked_views(req) if req is not None else None
+        recent_booked_views = self._fetch_recent_booked_views(req) if req is not None and enforce_eligibility else None
         slots = []
         seen = set()
         for index, row in enumerate(rows):
@@ -873,10 +888,10 @@ class BigQueryRepository:
                 return "old"
         return "new"
 
-    def fetch_inventory(self, req: MediaPlanRequest) -> list[dict]:
+    def fetch_inventory(self, req: MediaPlanRequest, enforce_eligibility: bool = True) -> list[dict]:
         active_slots = {
             (row["country"], slot_code_key(row["slot_code"])): row
-            for row in self.fetch_slot_catalog(req)
+            for row in self.fetch_slot_catalog(req, enforce_eligibility=enforce_eligibility)
             if row.get("country") and row.get("slot_code")
         }
         forecast_rows = self._table_records_for_window(
@@ -924,6 +939,9 @@ class BigQueryRepository:
                 continue
             forecast = int(parse_number(get_first(row, "slot_sessions", "forecast_views", "views")))
             booked = booked_by_date_slot.get((dt, row_country, slot_key_value), 0)
+            date_fraction = flight_date_fraction(dt, req.start_date, req.end_date)
+            forecast = int(round(forecast * date_fraction))
+            booked = int(round(booked * date_fraction))
             inventory.append(
                 {
                     "dt": dt,
@@ -932,6 +950,7 @@ class BigQueryRepository:
                     "forecast_views": forecast,
                     "booked_views": booked,
                     "available_views": max(forecast - booked, 0),
+                    "flight_date_fraction": date_fraction,
                 }
             )
         return inventory
@@ -1022,7 +1041,7 @@ class BigQueryRepository:
         }
         run_errors = self.client.insert_rows_json(self.settings.plan_runs_table, [run_row])
         if run_errors:
-            raise RuntimeError(f"Failed to write media_plan_runs: {run_errors}")
+            raise RuntimeError(f"BigQuery failed to write media_plan_runs: {run_errors}")
 
         line_rows = [
             {
@@ -1066,7 +1085,7 @@ class BigQueryRepository:
         if line_rows:
             line_errors = self.client.insert_rows_json(self.settings.plan_lines_table, line_rows)
             if line_errors:
-                raise RuntimeError(f"Failed to write media_plan_lines: {line_errors}")
+                raise RuntimeError(f"BigQuery failed to write media_plan_lines: {line_errors}")
         return plan_code, plan_link
 
     def get_saved_plan(self, reference: str) -> dict | None:

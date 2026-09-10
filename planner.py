@@ -51,6 +51,11 @@ def inclusive_days(start: date, end: date) -> int:
     return max((end - start).days + 1, 1)
 
 
+def campaign_duration_days(start: date, end: date) -> int:
+    """Duration for 09:00 start/end timestamps represented as date inputs."""
+    return max((end - start).days, 1)
+
+
 def normalize_pricing_model(value: str | None) -> str:
     raw = (value or "").strip().lower()
     if raw in {"cpd", "cost per day", "cost_per_day", "day"}:
@@ -451,12 +456,24 @@ def iter_dates(start: date, end: date):
         current += timedelta(days=1)
 
 
-def _distributed_daily_views(total_views: int, day_count: int) -> list[int]:
+def _date_exposure_weights(start: date, end: date) -> list[float]:
+    dates = list(iter_dates(start, end))
+    if len(dates) <= 1:
+        return [1.0] if dates else []
+    return [15 / 24, *([1.0] * max(len(dates) - 2, 0)), 9 / 24]
+
+
+def _distributed_daily_views(total_views: int, day_count: int, weights: list[float] | None = None) -> list[int]:
     if day_count <= 0:
         return []
-    base = total_views // day_count
-    remainder = total_views % day_count
-    return [base + (1 if idx < remainder else 0) for idx in range(day_count)]
+    active_weights = weights if weights and len(weights) == day_count else [1.0] * day_count
+    total_weight = sum(active_weights) or 1.0
+    raw = [total_views * weight / total_weight for weight in active_weights]
+    allocated = [int(value) for value in raw]
+    remainder = total_views - sum(allocated)
+    for index in sorted(range(day_count), key=lambda idx: raw[idx] - allocated[idx], reverse=True)[:remainder]:
+        allocated[index] += 1
+    return allocated
 
 
 def _cpm_row_pricing(
@@ -473,7 +490,7 @@ def _cpm_row_pricing(
         return 0.0, 0.0, 0.0, 0.0
     rate_schedule = meta.get("cpm_rate_schedule") or meta.get("rate_schedule") or {}
     days = list(iter_dates(start, end))
-    daily_views = _distributed_daily_views(planned_views, len(days))
+    daily_views = _distributed_daily_views(planned_views, len(days), _date_exposure_weights(start, end))
     gross_total = 0.0
     net_total = 0.0
     for idx, dt in enumerate(days):
@@ -600,11 +617,11 @@ def _phase_splits(req: MediaPlanRequest, phases: list[Phase]) -> dict[str, float
     total = sum(weights.values())
     if total > 0:
         return {name: weight / total for name, weight in weights.items()}
-    total_days = sum(inclusive_days(phase.from_date, phase.to_date) for phase in phases)
+    total_days = sum(campaign_duration_days(phase.from_date, phase.to_date) for phase in phases)
     if total_days <= 0:
         equal_share = 1.0 / len(phases)
         return {phase.name: equal_share for phase in phases}
-    return {phase.name: inclusive_days(phase.from_date, phase.to_date) / total_days for phase in phases}
+    return {phase.name: campaign_duration_days(phase.from_date, phase.to_date) / total_days for phase in phases}
 
 
 def _weighted_phase_sequence(phases: list[Phase], phase_splits: dict[str, float], count: int) -> list[Phase]:
@@ -1187,10 +1204,11 @@ def _slot_window(phase: Phase, phase_rows: list[EditablePlanLine], pricing_model
     if total_days <= 2:
         return phase.from_date, phase.to_date, total_days
 
+    minimum_calendar_days = 2 if phase.from_date < phase.to_date else 1
     if pricing_model == "CPD":
-        window_days = max(1, min(total_days, round(total_days * (0.45 + ((sequence % 3) * 0.15)))))
+        window_days = max(minimum_calendar_days, min(total_days, round(total_days * (0.45 + ((sequence % 3) * 0.15)))))
     else:
-        window_days = max(1, min(total_days, round(total_days * (0.3 + ((sequence % 4) * 0.12)))))
+        window_days = max(minimum_calendar_days, min(total_days, round(total_days * (0.3 + ((sequence % 4) * 0.12)))))
 
     occupied = _phase_existing_dates(phase_rows)
     step = max(1, total_days // max(len(phase_rows) + 2, 2))
@@ -1289,28 +1307,32 @@ def _placement_kind(candidate: Candidate) -> str:
 
 
 def _objective_diverse_order(candidates: list[Candidate], objective: str) -> list[Candidate]:
-    """Rank by objective while retaining some inventory from the secondary family."""
+    """Rank by objective while retaining homepage, CLP and other-page inventory."""
     ranked = sorted(
         candidates,
         key=lambda candidate: (_candidate_score(candidate, objective), _placement_priority(candidate), candidate.views),
         reverse=True,
     )
     normalized = normalize_objective(objective)
-    primary = "homepage" if normalized == "visibility" else "clp" if normalized in {"roas", "ctr"} else ""
-    secondary = "clp" if primary == "homepage" else "homepage" if primary == "clp" else ""
-    if not primary:
-        return ranked
-
-    primary_rows = [candidate for candidate in ranked if _placement_kind(candidate) == primary]
-    secondary_rows = [candidate for candidate in ranked if _placement_kind(candidate) == secondary]
-    other_rows = [candidate for candidate in ranked if _placement_kind(candidate) not in {primary, secondary}]
+    if normalized == "visibility":
+        cycle = ["homepage", "homepage", "homepage", "clp", "other"]
+    elif normalized in {"roas", "ctr"}:
+        cycle = ["clp", "clp", "clp", "homepage", "other"]
+    else:
+        cycle = ["homepage", "clp", "homepage", "clp", "other"]
+    buckets = {
+        kind: [candidate for candidate in ranked if _placement_kind(candidate) == kind]
+        for kind in ("homepage", "clp", "other")
+    }
     ordered: list[Candidate] = []
-    while primary_rows or secondary_rows:
-        ordered.extend(primary_rows[:4])
-        primary_rows = primary_rows[4:]
-        if secondary_rows:
-            ordered.append(secondary_rows.pop(0))
-    ordered.extend(other_rows)
+    while any(buckets.values()):
+        added = False
+        for kind in cycle:
+            if buckets[kind]:
+                ordered.append(buckets[kind].pop(0))
+                added = True
+        if not added:
+            break
     return ordered
 
 
@@ -1363,20 +1385,22 @@ def suggest_slots(
         for candidate in [preferred_candidate_for_slot(candidates_by_slot[key], selected_slot_pricing_map.get(key), req.objective)]
         if candidate
     ]
-    ranked_slot_keys = [
-        slot_key(candidate.country, candidate.slot_code)
-        for candidate in _objective_diverse_order(representative_candidates, req.objective)
-    ]
-    ordered_slot_keys: list[str] = []
+    country_orders: dict[str, list[str]] = {}
     for country in [country for country in req.countries if country]:
-        country_slot_keys = [key for key in ranked_slot_keys if key.startswith(f"{country}|")]
-        for key in country_slot_keys:
-            candidate = preferred_candidate_for_slot(candidates_by_slot[key], selected_slot_pricing_map.get(key), req.objective)
-            available = sum(inventory.get((candidate.country, candidate.slot_code, phase.name), 0) for phase in phases) if candidate else 0
-            if available > 0:
-                ordered_slot_keys.append(key)
-                break
-    ordered_slot_keys.extend(ranked_slot_keys)
+        country_orders[country] = [
+            slot_key(candidate.country, candidate.slot_code)
+            for candidate in _objective_diverse_order(
+                [candidate for candidate in representative_candidates if candidate.country == country],
+                req.objective,
+            )
+        ]
+    ordered_slot_keys: list[str] = []
+    max_country_slots = max((len(keys) for keys in country_orders.values()), default=0)
+    for index in range(max_country_slots):
+        for country in [country for country in req.countries if country]:
+            keys = country_orders.get(country, [])
+            if index < len(keys):
+                ordered_slot_keys.append(keys[index])
 
     for key in ordered_slot_keys:
         candidate = preferred_candidate_for_slot(candidates_by_slot.get(key, []), selected_slot_pricing_map.get(key), req.objective)
@@ -1456,11 +1480,15 @@ def plan_media(
     selected_slot_keys = set(selected_slot_key_list)
     candidates = expand_candidates_for_countries(req, base_candidates, slot_meta, settings)
     candidates = ensure_selected_slot_candidates(req, selected_slot_keys, selected_slot_pricing_map, candidates, slot_meta, settings)
+    manual_slot_keys = {str(value).strip().lower() for value in getattr(req, "manual_slot_keys", []) if str(value).strip()}
     candidates = [
         candidate
         for candidate in candidates
-        if (req.budget >= MIN_CPD_BUDGET_USD or candidate.pricing_model != "CPD")
-        and (not req.comcats or any(_slot_relevance_for_comcat(candidate, comcat) > 0 for comcat in req.comcats))
+        if slot_key(candidate.country, candidate.slot_code).lower() in manual_slot_keys
+        or (
+            (req.budget >= MIN_CPD_BUDGET_USD or candidate.pricing_model != "CPD")
+            and (not req.comcats or any(_slot_relevance_for_comcat(candidate, comcat) > 0 for comcat in req.comcats))
+        )
     ]
     if selected_slot_keys:
         candidates = [
@@ -1471,9 +1499,24 @@ def plan_media(
                 slot_key(candidate.country, candidate.slot_code) not in selected_slot_pricing_map
                 or candidate.pricing_model == selected_slot_pricing_map[slot_key(candidate.country, candidate.slot_code)]
             )
-        ]
+    ]
     if not candidates:
-        return [], {"reason": "No historical delivery rows found for the selected brand/comcat/countries."}
+        diagnostics = {"reason": "No eligible slot data was found for the selected brand, category, countries, dates, and pricing."}
+        if selected_slot_key_list:
+            diagnostics["omitted_selected_slots"] = [
+                {
+                    "slot_key": selected_key,
+                    "slot_name": selected_key.partition("|")[2] or selected_key,
+                    "buy_type": selected_slot_pricing_map.get(selected_key, "CPM"),
+                    "reason": (
+                        "The manually selected slot or requested buy type was not found in the unrestricted slot/rate catalog."
+                        if selected_key.lower() in manual_slot_keys
+                        else "The selected slot did not pass backend inventory, booking-history, category, pricing, or objective eligibility."
+                    ),
+                }
+                for selected_key in selected_slot_key_list
+            ]
+        return [], diagnostics
 
     inventory_by_slot_phase = _inventory_by_slot_phase(req, inventory_rows)
 
@@ -1482,9 +1525,8 @@ def plan_media(
     spent_total = sum(row.cost for row in rows)
     line_id = max([row.id for row in rows], default=0) + 1
 
-    # User exclusions are global; generated reuse is phase-scoped.  The same slot
-    # may legitimately run in two non-overlapping phases, which is essential for
-    # matching phase budgets without substituting a weaker placement.
+    # User exclusions are global; generated reuse is phase-scoped. The same slot
+    # may legitimately run in two non-overlapping phases when balancing splits.
     excluded_slot_keys = set(req.excluded_slot_keys)
     used_slot_phases = {
         (slot_key(row.country, row.slot_code), row.phase)
@@ -1503,29 +1545,35 @@ def plan_media(
     comcat_splits = _comcat_splits(req)
     phase_splits = _phase_splits(req, phases)
     spent_by_country: dict[str, float] = defaultdict(float)
+    append_failures: dict[str, list[str]] = defaultdict(list)
     for row in rows:
         spent_by_country[row.country] += float(row.cost or row.net_amount or 0)
 
     def append_row(candidate: Candidate, phase: Phase, stype: str, score_value: float, target_budget: float, force: bool = False, brand_name: str | None = None) -> bool:
         nonlocal line_id, spent_total
         slot_key_value = slot_key(candidate.country, candidate.slot_code)
+        def reject(reason: str) -> bool:
+            if reason not in append_failures[slot_key_value]:
+                append_failures[slot_key_value].append(reason)
+            return False
+
         requested_model = selected_slot_pricing_map.get(slot_key_value)
         if requested_model and candidate.pricing_model != requested_model:
-            return False
+            return reject(f"Requested {requested_model}, but this candidate is priced as {candidate.pricing_model}.")
         if not force and slot_key_value in excluded_slot_keys:
-            return False
+            return reject("The slot was explicitly excluded from regeneration.")
         if not force and (slot_key_value, phase.name) in used_slot_phases:
-            return False
+            return reject(f"The slot is already used in phase '{phase.name}'.")
 
         exact_inventory_key = (candidate.country, candidate.slot_code, phase.name)
         available = inventory_by_slot_phase.get(exact_inventory_key, 0)
         if available <= 0:
-            return False
+            return reject(f"No available forecast views remain in phase '{phase.name}'.")
 
         used_zone_category = _phase_category_zone_used(rows, candidate.country, phase.name)
         zone_category_key = _category_zone_key(candidate.country, candidate.marketplace, candidate.category, candidate.zone)
         if (candidate.category or candidate.zone) and zone_category_key in used_zone_category and not force:
-            return False
+            return reject(f"Another slot already uses the same category and zone in phase '{phase.name}'.")
 
         phase_rows = [row for row in rows if row.country == candidate.country and row.phase == phase.name]
         slot_rows = [row for row in rows if row.country == candidate.country and row.slot_code == candidate.slot_code]
@@ -1537,7 +1585,7 @@ def plan_media(
             row_from,
         )
         if not slot_window:
-            return False
+            return reject(f"No non-overlapping date window is available in phase '{phase.name}'.")
         row_from, row_to, days = slot_window
 
         buy_type = candidate.pricing_model
@@ -1545,14 +1593,14 @@ def plan_media(
         meta = get_slot_meta(slot_meta, candidate.country, candidate.slot_code)
         if buy_type == "CPD":
             if not slot_has_rate_for_model(meta, "CPD", row_from, row_to, settings.default_cpd):
-                return False
+                return reject(f"No valid CPD rate is available from {row_from} to {row_to}.")
             gross_rate = round(float(meta.get("cpd_rate") or candidate.slot_rate or settings.default_cpd), 4)
         else:
             if not slot_has_rate_for_model(meta, "CPM", row_from, row_to, settings.default_cpm):
-                return False
+                return reject(f"No valid CPM rate is available from {row_from} to {row_to}.")
             gross_rate = round(float(meta.get("cpm_rate") or candidate.slot_rate or settings.default_cpm), 4)
         if gross_rate <= 0:
-            return False
+            return reject(f"The {buy_type} rate is zero or invalid.")
         rate = discounted_rate(gross_rate, req.discount_pct)
 
         remaining_budget = max(req.budget - spent_total, 0)
@@ -1561,7 +1609,7 @@ def plan_media(
             one_day_net_rate = discounted_rate(gross_rate, req.discount_pct)
             working_budget = max(working_budget, min(one_day_net_rate, remaining_budget))
         if not is_foc and working_budget <= 0 and not force:
-            return False
+            return reject(f"No budget remained for phase '{phase.name}' and marketplace '{candidate.marketplace}'.")
 
         if buy_type == "CPM":
             planned_views = int(
@@ -1577,7 +1625,7 @@ def plan_media(
             if planned_views > available:
                 planned_views = floor_views_to_block(available)
             if planned_views < settings.min_slot_views:
-                return False
+                return reject(f"Only {planned_views:,} views were available; the minimum block is {settings.min_slot_views:,} views.")
             if is_foc:
                 net_amount = 0.0
                 gross_amount = 0.0
@@ -1594,47 +1642,53 @@ def plan_media(
                     settings.default_cpm,
                 )
                 if gross_amount <= 0 and net_amount <= 0:
-                    return False
+                    return reject("CPM pricing produced a zero amount for the selected date window.")
         else:
             cpd_days = list(iter_dates(row_from, row_to))
+            cpd_weights = _date_exposure_weights(row_from, row_to)
             scheduled_daily_rates = [
                 float((meta.get("cpd_rate_schedule") or {}).get(day.isoformat()) or gross_rate)
                 for day in cpd_days
             ]
             if is_foc:
                 max_days = len(cpd_days)
+                exposure_days = sum(cpd_weights)
                 gross_amount = 0.0
                 net_amount = 0.0
             else:
                 gross_amount = 0.0
                 net_amount = 0.0
                 max_days = 0
-                for daily_rate in scheduled_daily_rates:
-                    daily_net_rate = discounted_rate(daily_rate, req.discount_pct)
+                exposure_days = 0.0
+                for daily_rate, exposure_weight in zip(scheduled_daily_rates, cpd_weights):
+                    daily_gross_amount = daily_rate * exposure_weight
+                    daily_net_rate = discounted_rate(daily_rate, req.discount_pct) * exposure_weight
                     if net_amount + daily_net_rate > working_budget + 1e-9:
                         break
-                    gross_amount += daily_rate
+                    gross_amount += daily_gross_amount
                     net_amount += daily_net_rate
                     max_days += 1
+                    exposure_days += exposure_weight
                 gross_amount = round(gross_amount, 2)
                 net_amount = round(net_amount, 2)
                 if max_days <= 0:
-                    return False
-            planned_views = min(available, int(candidate.views / max(candidate.active_days, 1) * max_days)) or None
+                    minimum_cost = discounted_rate(scheduled_daily_rates[0], req.discount_pct) * cpd_weights[0] if scheduled_daily_rates else 0
+                    return reject(f"The available allocation for phase '{phase.name}' is below the first CPD segment cost of USD {minimum_cost:,.2f}.")
+            planned_views = min(available, int(candidate.views / max(candidate.active_days, 1) * exposure_days)) or None
             row_to = row_from.fromordinal(row_from.toordinal() + max_days - 1)
-            days = inclusive_days(row_from, row_to)
-            gross_rate_avg = round(gross_amount / max(days, 1), 4) if not is_foc else gross_rate
-            net_rate_avg = round(net_amount / max(days, 1), 4) if not is_foc else rate
+            days = campaign_duration_days(row_from, row_to)
+            gross_rate_avg = round(gross_amount / max(exposure_days, 0.0001), 4) if not is_foc else gross_rate
+            net_rate_avg = round(net_amount / max(exposure_days, 0.0001), 4) if not is_foc else rate
 
         if not is_foc and spent_total + net_amount > req.budget:
             remaining_budget = round(max(req.budget - spent_total, 0), 2)
             if remaining_budget <= 0 and not force:
-                return False
+                return reject("The campaign budget was fully allocated before this slot could be placed.")
             if buy_type == "CPM":
                 capped_views = floor_views_to_block(int(remaining_budget * 1000 / max(rate, 0.01)))
                 capped_views = min(capped_views, floor_views_to_block(available))
                 if capped_views < settings.min_slot_views:
-                    return False
+                    return reject(f"The remaining USD {remaining_budget:,.2f} cannot buy the minimum {settings.min_slot_views:,}-view CPM block.")
                 planned_views = capped_views
                 gross_amount, net_amount, gross_rate_avg, net_rate_avg = _cpm_row_pricing(
                     meta,
@@ -1646,7 +1700,7 @@ def plan_media(
                     settings.default_cpm,
                 )
                 if gross_amount <= 0 and net_amount <= 0:
-                    return False
+                    return reject("CPM pricing produced a zero amount after applying the remaining-budget cap.")
                 while planned_views >= settings.min_slot_views and spent_total + net_amount > req.budget:
                     planned_views -= 100
                     gross_amount, net_amount, gross_rate_avg, net_rate_avg = _cpm_row_pricing(
@@ -1659,29 +1713,33 @@ def plan_media(
                         settings.default_cpm,
                     )
                 if planned_views < settings.min_slot_views or spent_total + net_amount > req.budget:
-                    return False
+                    return reject(f"The slot could not fit within the remaining campaign budget of USD {remaining_budget:,.2f}.")
             else:
                 cpd_days = list(iter_dates(row_from, row_to))
+                cpd_weights = _date_exposure_weights(row_from, row_to)
                 gross_amount = 0.0
                 net_amount = 0.0
                 fitted_days = 0
-                for day in cpd_days:
+                exposure_days = 0.0
+                for day, exposure_weight in zip(cpd_days, cpd_weights):
                     daily_gross_rate = float((meta.get("cpd_rate_schedule") or {}).get(day.isoformat()) or gross_rate)
-                    daily_net_rate = discounted_rate(daily_gross_rate, req.discount_pct)
+                    daily_gross_amount = daily_gross_rate * exposure_weight
+                    daily_net_rate = discounted_rate(daily_gross_rate, req.discount_pct) * exposure_weight
                     if net_amount + daily_net_rate > remaining_budget + 1e-9:
                         break
-                    gross_amount += daily_gross_rate
+                    gross_amount += daily_gross_amount
                     net_amount += daily_net_rate
                     fitted_days += 1
+                    exposure_days += exposure_weight
                 if fitted_days <= 0:
-                    return False
+                    return reject(f"The remaining USD {remaining_budget:,.2f} cannot buy the first CPD flight segment.")
                 row_to = row_from.fromordinal(row_from.toordinal() + fitted_days - 1)
-                days = inclusive_days(row_from, row_to)
-                planned_views = min(available, int(candidate.views / max(candidate.active_days, 1) * fitted_days)) or None
+                days = campaign_duration_days(row_from, row_to)
+                planned_views = min(available, int(candidate.views / max(candidate.active_days, 1) * exposure_days)) or None
                 gross_amount = round(gross_amount, 2)
                 net_amount = round(net_amount, 2)
-                gross_rate_avg = round(gross_amount / max(days, 1), 4)
-                net_rate_avg = round(net_amount / max(days, 1), 4)
+                gross_rate_avg = round(gross_amount / max(exposure_days, 0.0001), 4)
+                net_rate_avg = round(net_amount / max(exposure_days, 0.0001), 4)
 
         rows.append(
             EditablePlanLine.model_validate(
@@ -1697,7 +1755,7 @@ def plan_media(
                     "dimension": candidate.dimension or get_slot_meta(slot_meta, candidate.country, candidate.slot_code).get("dimension", ""),
                     "asset": asset_from_slot(candidate.slot_code, candidate.slot_name),
                     "slot_name": candidate.slot_name or asset_from_slot(candidate.slot_code, candidate.slot_name),
-                    "days": days,
+                    "days": campaign_duration_days(row_from, row_to),
                     "buyType": buy_type,
                     "rate": round(net_rate_avg, 4),
                     "gross_cpm": round(gross_rate_avg if buy_type == "CPM" else 0.0, 4),
@@ -2056,8 +2114,14 @@ def plan_media(
         requested_model = selected_slot_pricing_map.get(selected_key)
         if requested_model not in allowed_models:
             requested_model = allowed_models[0] if allowed_models else "CPM"
-        if not candidate:
-            reason = "No matching candidate was available for the selected slot and buy type."
+        recorded_failures = append_failures.get(selected_key, [])
+        if recorded_failures:
+            reason = " ".join(recorded_failures[-3:])
+        elif not candidate:
+            if selected_key.lower() in manual_slot_keys:
+                reason = "The manually selected slot or requested buy type was not found in the slot/rate catalog."
+            else:
+                reason = "The slot did not pass backend eligibility, category relevance, pricing, or campaign-objective checks."
         else:
             phase_inventory = sum(inventory_by_slot_phase.get((candidate.country, candidate.slot_code, phase.name), 0) for phase in phases)
             if phase_inventory <= 0:
@@ -2132,7 +2196,7 @@ def plan_media(
                             "dimension": str(slot.get("dimension") or "").strip(),
                             "asset": slot_name_value,
                             "slot_name": slot_name_value,
-                            "days": inclusive_days(phase.from_date, phase.to_date),
+                            "days": campaign_duration_days(phase.from_date, phase.to_date),
                             "buyType": "OFF-DECK",
                             "rate": 0,
                             "gross_cpm": 0,

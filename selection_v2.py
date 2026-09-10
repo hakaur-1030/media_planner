@@ -31,7 +31,7 @@ from planner import (
     build_candidates,
     expand_candidates_for_countries,
     get_slot_meta,
-    inclusive_days,
+    campaign_duration_days,
     normalize_objective,
     _slot_relevance_for_comcat,
 )
@@ -98,7 +98,7 @@ def enrich(req: MediaPlanRequest, historical_rows, inventory_rows, slot_meta, se
         key = (row.get("country"), str(row.get("slot_code") or "").strip().lower())
         available_by_slot[key] += max(int(row.get("available_views") or 0), 0)
 
-    days = inclusive_days(req.start_date, req.end_date)
+    days = campaign_duration_days(req.start_date, req.end_date)
     best: dict[tuple, dict] = {}
     for c in candidates:
         key = (c.country, c.slot_code)
@@ -206,7 +206,7 @@ def _slot_relevance_for_comcat_dict(s: dict, comcat: str) -> float:
 
 
 def plan_media_v2(req: MediaPlanRequest, historical_rows, inventory_rows, slot_meta, settings) -> tuple[list[dict], dict]:
-    days = inclusive_days(req.start_date, req.end_date)
+    days = campaign_duration_days(req.start_date, req.end_date)
     budget = float(req.budget or 0)
     slots = enrich(req, historical_rows, inventory_rows, slot_meta, settings)
     slots, flagged = flag_ecpm(slots)
@@ -314,7 +314,7 @@ def to_editable_rows(v2_rows: list[dict], req: MediaPlanRequest) -> list[Editabl
     """Convert v2 selection output into the standard EditablePlanLine shape so the existing
     planner UI (and build_response / AI read / save) renders a V2 plan unchanged. Single
     full-flight phase; discounts are not yet modelled in v2 (follow-up)."""
-    days = inclusive_days(req.start_date, req.end_date)
+    days = campaign_duration_days(req.start_date, req.end_date)
     discount = float(getattr(req, "discount_pct", 0) or 0)
     factor = max(1 - discount / 100, 0.0001)
     tilt = _weighting(req)

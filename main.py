@@ -35,6 +35,23 @@ app.add_middleware(
 
 @app.exception_handler(Exception)
 def unhandled_exception_handler(request: Request, exc: Exception):
+    exc_module = type(exc).__module__
+    exc_text = str(exc) or type(exc).__name__
+    if (
+        exc_module.startswith(("google.api_core", "google.cloud.bigquery", "google.auth"))
+        or "bigquery" in exc_module.lower()
+        or "bigquery" in exc_text.lower()
+        or "noonbiadmon." in exc_text.lower()
+    ):
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": {
+                    "message": f"BigQuery is not responding or the application could not read/write BigQuery: {exc_text}",
+                    "source": "bigquery",
+                }
+            },
+        )
     return JSONResponse(status_code=500, content={"detail": {"message": str(exc) or "Internal Server Error"}})
 
 
@@ -45,6 +62,17 @@ def get_repo(settings: Settings = Depends(get_settings)) -> BigQueryRepository:
 def gross_budget_from_net(net_amount: float, discount_pct: float) -> float:
     discount_factor = max(1 - (float(discount_pct or 0) / 100), 0.0001)
     return round(float(net_amount or 0) / discount_factor, 2)
+
+
+def plan_failure_message(diagnostics: dict, fallback: str = "No plan rows generated.") -> str:
+    omitted = diagnostics.get("omitted_selected_slots") or []
+    if omitted:
+        details = "; ".join(
+            f"{item.get('slot_name') or item.get('slot_key')}: {item.get('reason') or 'could not be placed'}"
+            for item in omitted
+        )
+        return f"No selected slot could be placed. {details}"
+    return diagnostics.get("reason") or fallback
 
 
 @lru_cache(maxsize=1)
@@ -136,7 +164,7 @@ def build_response(req: MediaPlanRequest, rows, diagnostics, repo, plan_id=None)
     return {"rows": rows, "summary": summary, "diagnostics": diagnostics}
 
 
-def build_available_slots(req: MediaPlanRequest, inventory_rows, slot_meta):
+def build_available_slots(req: MediaPlanRequest, inventory_rows, slot_meta, include_zero: bool = False):
     meta_by_normalized_key = {
         (country, str(slot_code or "").strip().lower()): meta
         for (country, slot_code), meta in slot_meta.items()
@@ -154,8 +182,18 @@ def build_available_slots(req: MediaPlanRequest, inventory_rows, slot_meta):
         key = (country, meta.get("slot_code") or slot_code)
         available_by_slot[key] = available_by_slot.get(key, 0) + available
 
+    catalog_keys = set(available_by_slot)
+    if include_zero:
+        selected_countries = {str(country or "").lower() for country in req.countries}
+        catalog_keys.update(
+            (country, meta.get("slot_code") or slot_code)
+            for (country, slot_code), meta in slot_meta.items()
+            if not selected_countries or str(country or "").lower() in selected_countries
+        )
+
     available_slots = []
-    for key, available in available_by_slot.items():
+    for key in catalog_keys:
+        available = available_by_slot.get(key, 0)
         meta = meta_by_normalized_key.get((key[0], str(key[1]).strip().lower()), {})
         cpm_rate = float(meta.get("cpm_rate") or 0) or 0.0
         cpd_rate = float(meta.get("cpd_rate") or 0) or 0.0
@@ -181,6 +219,30 @@ def build_available_slots(req: MediaPlanRequest, inventory_rows, slot_meta):
         )
     available_slots.sort(key=lambda slot: (slot["country"], -slot["available_views"], slot["slot_name"].lower()))
     return available_slots
+
+
+def merge_manual_slot_inputs(req: MediaPlanRequest, repo: BigQueryRepository, inventory_rows, slot_meta):
+    manual_keys = {str(value or "").strip().lower() for value in req.manual_slot_keys if str(value or "").strip()}
+    if not manual_keys:
+        return inventory_rows, slot_meta
+    unrestricted_meta = repo.fetch_slot_meta(req, enforce_eligibility=False)
+    unrestricted_inventory = repo.fetch_inventory(req, enforce_eligibility=False)
+    merged_meta = dict(slot_meta)
+    for (country, slot_code), meta in unrestricted_meta.items():
+        if f"{country}|{slot_code}".lower() in manual_keys:
+            merged_meta[(country, slot_code)] = meta
+    existing_inventory_keys = {
+        (row.get("dt"), str(row.get("country") or "").lower(), str(row.get("slot_code") or "").lower())
+        for row in inventory_rows
+    }
+    merged_inventory = list(inventory_rows)
+    for row in unrestricted_inventory:
+        manual_key = f"{row.get('country') or ''}|{row.get('slot_code') or ''}".lower()
+        inventory_key = (row.get("dt"), str(row.get("country") or "").lower(), str(row.get("slot_code") or "").lower())
+        if manual_key in manual_keys and inventory_key not in existing_inventory_keys:
+            merged_inventory.append(row)
+            existing_inventory_keys.add(inventory_key)
+    return merged_inventory, merged_meta
 
 
 @app.get("/")
@@ -237,11 +299,34 @@ def slot_preselection(req: MediaPlanRequest, settings: Settings = Depends(get_se
     slot_meta = repo.fetch_slot_meta(req)
     suggestions = suggest_slots(req, historical_rows, inventory_rows, slot_meta, settings, limit=max(len(req.countries), 1) * (6 if req.budget <= 10000 else 10))
     available_slots = build_available_slots(req, inventory_rows, slot_meta)
-    offdeck_slots = repo.fetch_offdeck_slots(req)
+    manual_inventory_rows = repo.fetch_inventory(req, enforce_eligibility=False)
+    manual_slot_meta = repo.fetch_slot_meta(req, enforce_eligibility=False)
+    manual_available_slots = build_available_slots(req, manual_inventory_rows, manual_slot_meta, include_zero=True)
+    offdeck_slots = repo.fetch_offdeck_slots(req, enforce_eligibility=False)
+    preview_req = req.model_copy(deep=True)
+    preview_req.selected_slot_keys = [slot["slot_key"] for slot in suggestions]
+    preview_req.manual_slot_keys = []
+    preview_req.selected_slot_pricing = {
+        slot["slot_key"]: slot.get("pricing_model") or "CPM"
+        for slot in suggestions
+    }
+    preview_rows, preview_diagnostics = plan_media(preview_req, historical_rows, inventory_rows, slot_meta, settings)
+    preview_spend_by_slot: dict[str, float] = {}
+    for row in preview_rows:
+        key = f"{row.country}|{row.slot_code}"
+        preview_spend_by_slot[key] = preview_spend_by_slot.get(key, 0.0) + float(row.cost or 0)
+    for slot in suggestions:
+        slot["preview_spend"] = round(preview_spend_by_slot.get(slot["slot_key"], 0.0), 2)
     return {
         "suggestions": suggestions,
         "available_slots": available_slots,
+        "manual_available_slots": manual_available_slots,
         "offdeck_slots": offdeck_slots,
+        "budget_preview": {
+            "allocated": round(sum(float(row.cost or 0) for row in preview_rows), 2),
+            "budget": req.budget,
+            "utilization_pct": preview_diagnostics.get("budget_utilization_pct", 0.0),
+        },
         "diagnostics": {
             "historical_rows": len(historical_rows),
             "inventory_rows": len(inventory_rows),
@@ -272,19 +357,20 @@ def create_media_plan(req: MediaPlanRequest, engine: str = "v1", settings: Setti
     historical_rows = repo.fetch_historical_performance(req)
     inventory_rows = repo.fetch_inventory(req)
     slot_meta = repo.fetch_slot_meta(req)
+    inventory_rows, slot_meta = merge_manual_slot_inputs(req, repo, inventory_rows, slot_meta)
 
     if str(engine).lower() == "v2":
         v2_rows, diagnostics = plan_media_v2(req, historical_rows, inventory_rows, slot_meta, settings)
         rows = to_editable_rows(v2_rows, req)
         diagnostics.update({"selected_comcats": req.comcats, "selected_countries": req.countries, "brand_tag": req.brand_tag, "engine": "v2"})
         if not rows:
-            raise HTTPException(status_code=422, detail={"message": "No plan rows generated for the selected inputs.", "diagnostics": diagnostics})
+            raise HTTPException(status_code=422, detail={"message": plan_failure_message(diagnostics, "No plan rows generated for the selected inputs."), "diagnostics": diagnostics})
         return build_response(req, rows, diagnostics, repo)
 
     rows, diagnostics = plan_media(req, historical_rows, inventory_rows, slot_meta, settings)
     diagnostics.update({"selected_comcats": req.comcats, "selected_countries": req.countries, "brand_tag": req.brand_tag, "engine": "v1"})
     if not rows:
-        raise HTTPException(status_code=422, detail={"message": diagnostics.get("reason") or "No plan rows generated.", "diagnostics": diagnostics})
+        raise HTTPException(status_code=422, detail={"message": plan_failure_message(diagnostics), "diagnostics": diagnostics})
     diagnostics["roas_refine"] = {
         "applied": False,
         "reason": "skipped to preserve the requested budget, phase, marketplace, comcat, and selected-slot allocation",
@@ -301,19 +387,20 @@ def regenerate_media_plan(plan_id: str, req: MediaPlanRequest, engine: str = "v1
     historical_rows = repo.fetch_historical_performance(req)
     inventory_rows = repo.fetch_inventory(req)
     slot_meta = repo.fetch_slot_meta(req)
+    inventory_rows, slot_meta = merge_manual_slot_inputs(req, repo, inventory_rows, slot_meta)
 
     if str(engine).lower() == "v2":
         v2_rows, diagnostics = plan_media_v2(req, historical_rows, inventory_rows, slot_meta, settings)
         rows = to_editable_rows(v2_rows, req)
         diagnostics.update({"selected_comcats": req.comcats, "selected_countries": req.countries, "brand_tag": req.brand_tag, "engine": "v2", "regenerated": True})
         if not rows:
-            raise HTTPException(status_code=422, detail={"message": "No plan rows generated for the selected inputs.", "diagnostics": diagnostics})
+            raise HTTPException(status_code=422, detail={"message": plan_failure_message(diagnostics, "No plan rows generated for the selected inputs."), "diagnostics": diagnostics})
         return build_response(req, rows, diagnostics, repo, plan_id=plan_id)
 
     rows, diagnostics = plan_media(req, historical_rows, inventory_rows, slot_meta, settings)
     diagnostics.update({"selected_comcats": req.comcats, "selected_countries": req.countries, "brand_tag": req.brand_tag, "engine": "v1", "regenerated": True})
     if not rows:
-        raise HTTPException(status_code=422, detail={"message": diagnostics.get("reason") or "No plan rows generated.", "diagnostics": diagnostics})
+        raise HTTPException(status_code=422, detail={"message": plan_failure_message(diagnostics), "diagnostics": diagnostics})
     return build_response(req, rows, diagnostics, repo, plan_id=plan_id)
 
 
