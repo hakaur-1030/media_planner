@@ -135,7 +135,7 @@ def plan_failure_message(diagnostics: dict, fallback: str = "No plan rows genera
     return diagnostics.get("reason") or fallback
 
 
-def strict_split_violations(diagnostics: dict, tolerance_pct: float = 1.0) -> list[str]:
+def budget_split_deviations(diagnostics: dict, reporting_threshold_pct: float = 0.1) -> list[str]:
     violations = []
     dimensions = (
         ("phase", diagnostics.get("phase_budget_split") or {}, diagnostics.get("actual_phase_budget_split") or {}),
@@ -146,7 +146,7 @@ def strict_split_violations(diagnostics: dict, tolerance_pct: float = 1.0) -> li
         for name, target in requested.items():
             actual_value = float(actual.get(name, 0) or 0)
             target_value = float(target or 0)
-            if abs(actual_value - target_value) > tolerance_pct:
+            if abs(actual_value - target_value) > reporting_threshold_pct:
                 violations.append(f"{dimension} '{name}' requested {target_value:.1f}% but received {actual_value:.1f}%")
     return violations
 
@@ -484,12 +484,8 @@ def create_media_plan(req: MediaPlanRequest, engine: str = "v1", settings: Setti
     diagnostics.update({"selected_comcats": req.comcats, "selected_countries": req.countries, "brand_tag": req.brand_tag, "engine": "v1"})
     if not rows:
         raise HTTPException(status_code=422, detail={"message": plan_failure_message(diagnostics), "diagnostics": diagnostics})
-    split_violations = strict_split_violations(diagnostics)
-    if split_violations:
-        raise HTTPException(status_code=422, detail={
-            "message": "The strict budget split could not be satisfied with the eligible inventory and selected slots: " + "; ".join(split_violations),
-            "diagnostics": diagnostics,
-        })
+    diagnostics["budget_split_deviations"] = budget_split_deviations(diagnostics)
+    diagnostics["budget_split_status"] = "closest_feasible" if diagnostics["budget_split_deviations"] else "matched"
     diagnostics["roas_refine"] = {
         "applied": False,
         "reason": "skipped to preserve the requested budget, phase, marketplace, comcat, and selected-slot allocation",
@@ -536,12 +532,8 @@ def regenerate_media_plan(plan_id: str, req: MediaPlanRequest, engine: str = "v1
     diagnostics.update({"selected_comcats": req.comcats, "selected_countries": req.countries, "brand_tag": req.brand_tag, "engine": "v1", "regenerated": True, "regenerated_from": plan_id})
     if not rows:
         raise HTTPException(status_code=422, detail={"message": plan_failure_message(diagnostics), "diagnostics": diagnostics})
-    split_violations = strict_split_violations(diagnostics)
-    if split_violations:
-        raise HTTPException(status_code=422, detail={
-            "message": "The strict budget split could not be satisfied with the eligible inventory and selected slots: " + "; ".join(split_violations),
-            "diagnostics": diagnostics,
-        })
+    diagnostics["budget_split_deviations"] = budget_split_deviations(diagnostics)
+    diagnostics["budget_split_status"] = "closest_feasible" if diagnostics["budget_split_deviations"] else "matched"
     return build_response(req, rows, diagnostics, repo)
 
 

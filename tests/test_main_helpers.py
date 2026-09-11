@@ -2,11 +2,22 @@ from datetime import date, timedelta
 import unittest
 from unittest.mock import Mock, patch
 
-from main import refresh_regeneration_selection, regenerate_media_plan
+from main import budget_split_deviations, refresh_regeneration_selection, regenerate_media_plan
 from models import MediaPlanRequest
 
 
 class RegenerationHelpersTest(unittest.TestCase):
+    def test_split_difference_is_available_as_diagnostic_information(self):
+        diagnostics = {
+            "phase_budget_split": {"Phase 1": 66.7, "Phase 2": 33.3},
+            "actual_phase_budget_split": {"Phase 1": 63.1, "Phase 2": 36.9},
+            "marketplace_budget_split": {"core": 70.0, "supermall": 30.0},
+            "actual_marketplace_budget_split": {"core": 72.8, "supermall": 27.2},
+        }
+        differences = budget_split_deviations(diagnostics)
+        self.assertEqual(len(differences), 4)
+        self.assertIn("requested 66.7% but received 63.1%", differences[0])
+
     def make_request(self):
         start = date.today() + timedelta(days=2)
         return MediaPlanRequest.model_validate({
