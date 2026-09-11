@@ -8,10 +8,12 @@ from planner import (
     MAX_SLOT_BUDGET_SHARE,
     MIN_CPD_BUDGET_USD,
     _date_exposure_weights,
+    _campaign_diverse_order,
     _objective_diverse_order,
     marketplace_from_slot,
     _placement_kind,
     _repair_daily_continuity,
+    split_rows_at_rate_changes,
     _slot_values_relevance_for_comcat,
     campaign_duration_days,
     plan_media,
@@ -68,6 +70,67 @@ class PlannerRulesTest(unittest.TestCase):
         self.assertEqual(_placement_kind(roas_order[0]), "clp")
         self.assertEqual(_placement_kind(reach_order[0]), "homepage")
         self.assertEqual({_placement_kind(row) for row in roas_order}, {"homepage", "clp", "other"})
+
+    def test_campaign_diversity_prefers_unused_generated_slots_but_not_manual_slots(self):
+        used = candidate("used_home", "Home Page", "Home Page", 0.9)
+        unused = candidate("unused_clp", "CLP", "Mobiles", 0.8)
+        manual = candidate("manual_home", "Home Page", "Home Page", 0.7)
+        ordered = _campaign_diverse_order(
+            [used, unused, manual],
+            {"ae|used_home", "ae|manual_home"},
+            {"ae|manual_home"},
+        )
+        self.assertEqual([row.slot_code for row in ordered], ["unused_clp", "manual_home", "used_home"])
+
+    def test_rate_change_splits_a_cpm_plan_line_without_changing_totals(self):
+        row = EditablePlanLine.model_validate({
+            "id": 7, "from": date(2026, 10, 1), "to": date(2026, 10, 3),
+            "country": "ae", "page": "Home", "asset": "Home hero", "slot_name": "Home hero",
+            "days": 2, "buyType": "CPM", "rate": 15, "gross_cpm": 15, "net_cpm": 15,
+            "views": 4_000, "cost": 53.75, "gross_amount": 53.75, "net_amount": 53.75,
+            "phase": "Launch", "brand": "Test", "stype": "reach", "slot_code": "home_hero",
+        })
+        meta = {
+            ("ae", "home_hero"): {
+                "slot_code": "home_hero", "cpm_rate": 15,
+                "cpm_rate_schedule": {"2026-10-01": 10, "2026-10-02": 15, "2026-10-03": 15},
+            }
+        }
+
+        split = split_rows_at_rate_changes([row], meta, discount_pct=0)
+
+        self.assertEqual(len(split), 2)
+        self.assertEqual([(item.from_date, item.to_date, item.gross_cpm) for item in split], [
+            (date(2026, 10, 1), date(2026, 10, 1), 10),
+            (date(2026, 10, 2), date(2026, 10, 3), 15),
+        ])
+        self.assertEqual(sum(item.views or 0 for item in split), 4_000)
+        self.assertEqual(sum(item.cost for item in split), 53.75)
+        self.assertEqual(sum(item.gross_amount for item in split), 53.75)
+
+    def test_rate_change_splits_a_cpd_plan_line_without_changing_totals(self):
+        row = EditablePlanLine.model_validate({
+            "id": 8, "from": date(2026, 10, 1), "to": date(2026, 10, 2),
+            "country": "ae", "page": "Home", "asset": "Home hero", "slot_name": "Home hero",
+            "days": 1, "buyType": "CPD", "rate": 200, "views": 1_000,
+            "cost": 137.5, "gross_amount": 137.5, "net_amount": 137.5,
+            "phase": "Launch", "brand": "Test", "stype": "reach", "slot_code": "home_hero",
+        })
+        meta = {
+            ("ae", "home_hero"): {
+                "slot_code": "home_hero", "cpd_rate": 200,
+                "cpd_rate_schedule": {"2026-10-01": 100, "2026-10-02": 200},
+            }
+        }
+
+        split = split_rows_at_rate_changes([row], meta, discount_pct=0)
+
+        self.assertEqual([(item.from_date, item.to_date, item.rate) for item in split], [
+            (date(2026, 10, 1), date(2026, 10, 1), 100),
+            (date(2026, 10, 2), date(2026, 10, 2), 200),
+        ])
+        self.assertEqual(sum(item.cost for item in split), 137.5)
+        self.assertEqual(sum(item.gross_amount for item in split), 137.5)
 
     def test_supermall_slot_code_overrides_legacy_core_metadata(self):
         self.assertEqual(marketplace_from_slot("supermall_ae_sfu_1", "SFU 1", "core"), "supermall")

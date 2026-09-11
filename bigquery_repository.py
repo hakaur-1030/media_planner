@@ -403,13 +403,27 @@ class BigQueryRepository:
         start: date,
         end: date,
     ) -> tuple[dict[tuple[str, str], dict], dict[str, dict]]:
-        rows = self._table_records_for_window(
-            self.settings.slot_rate_card_table,
-            start,
-            end,
-            "date",
-            "dt",
-        )
+        # The legacy rate card is used outside Q4. Q4 rates are maintained in a
+        # separate daily table where `type` identifies whether `cost` is CPM or CPD.
+        # Split a flight that crosses the boundary so every service date reads from
+        # its correct rate-card source.
+        windows: list[tuple[str, date, date]] = []
+        q4_table = getattr(self.settings, "slot_rate_card_q4_table", "")
+        cursor = start
+        while cursor <= end:
+            in_q4 = cursor.month in {10, 11, 12}
+            window_end = cursor
+            while window_end < end and ((window_end + timedelta(days=1)).month in {10, 11, 12}) == in_q4:
+                window_end += timedelta(days=1)
+            table_id = q4_table if in_q4 and q4_table else self.settings.slot_rate_card_table
+            windows.append((table_id, cursor, window_end))
+            cursor = window_end + timedelta(days=1)
+
+        rows_with_source = [
+            (row, table_id == q4_table)
+            for table_id, window_start, window_end in windows
+            for row in self._table_records_for_window(table_id, window_start, window_end, "date", "dt")
+        ]
 
         def bucket():
             return {
@@ -421,15 +435,21 @@ class BigQueryRepository:
 
         by_country_slot: dict[tuple[str, str], dict] = defaultdict(bucket)
         by_slot: dict[str, dict] = defaultdict(bucket)
-        for row in rows:
+        for row, is_q4_rate_card in rows_with_source:
             slot_code = str(get_first(row, "slot_code", "slot") or "").strip()
             if not slot_code:
                 continue
             slot_key = slot_code_key(slot_code)
             country = infer_country(row)
             dt = parse_date(get_first(row, "date", "dt"))
-            cpm_rate = parse_number(get_first(row, "cpm_rate"))
-            cpd_rate = parse_number(get_first(row, "cpd_rate"))
+            if is_q4_rate_card:
+                rate = parse_number(get_first(row, "cost"))
+                pricing_model = normalize_pricing_model(get_first(row, "type"))
+                cpm_rate = rate if pricing_model == "CPM" else 0.0
+                cpd_rate = rate if pricing_model == "CPD" else 0.0
+            else:
+                cpm_rate = parse_number(get_first(row, "cpm_rate"))
+                cpd_rate = parse_number(get_first(row, "cpd_rate"))
             target_slot = by_slot[slot_key]
             if cpm_rate > 0:
                 target_slot["cpm_rates"].append(cpm_rate)

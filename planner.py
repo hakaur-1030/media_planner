@@ -658,6 +658,96 @@ def _cpd_daily_rates(
     return rates
 
 
+def split_rows_at_rate_changes(
+    rows: list[EditablePlanLine],
+    slot_meta: dict[tuple[str, str], dict],
+    discount_pct: float,
+) -> list[EditablePlanLine]:
+    """Split generated plan rows into contiguous date ranges with one rate each.
+
+    Planning and budget allocation remain flight-level. This presentation step runs
+    only after allocation is complete, so it preserves every row's total views,
+    gross amount, and net amount while making daily rate-card changes explicit.
+    """
+    next_id = max((row.id for row in rows), default=0) + 1
+    split_rows: list[EditablePlanLine] = []
+    for row in rows:
+        if str(row.buyType or "").upper() == "OFF-DECK":
+            split_rows.append(row)
+            continue
+        buy_type = normalize_pricing_model(row.buyType)
+        if buy_type not in {"CPM", "CPD"} or row.manual or row.locked:
+            split_rows.append(row)
+            continue
+
+        meta = get_slot_meta(slot_meta, row.country, row.slot_code)
+        schedule_key = "cpd_rate_schedule" if buy_type == "CPD" else "cpm_rate_schedule"
+        schedule = meta.get(schedule_key) or (meta.get("rate_schedule") if buy_type == "CPM" else {}) or {}
+        if not isinstance(schedule, dict):
+            split_rows.append(row)
+            continue
+
+        dates = list(iter_dates(row.from_date, row.to_date))
+        fallback_rate = (
+            float(meta.get("cpd_rate") or row.rate or 0)
+            if buy_type == "CPD"
+            else float(meta.get("cpm_rate") or row.gross_cpm or row.rate or 0)
+        )
+        daily_rates = [float(schedule.get(day.isoformat()) or fallback_rate) for day in dates]
+        if len(dates) < 2 or len(set(daily_rates)) < 2:
+            split_rows.append(row)
+            continue
+
+        groups: list[tuple[int, int, float]] = []
+        group_start = 0
+        for index in range(1, len(dates) + 1):
+            if index == len(dates) or daily_rates[index] != daily_rates[group_start]:
+                groups.append((group_start, index, daily_rates[group_start]))
+                group_start = index
+
+        weights = _date_exposure_weights(row.from_date, row.to_date)
+        daily_views = _distributed_daily_views(int(row.views or 0), len(dates), weights)
+        generated: list[EditablePlanLine] = []
+        for group_index, (start_index, end_index, gross_rate) in enumerate(groups):
+            segment = row.model_copy(deep=True)
+            if group_index:
+                segment.id = next_id
+                next_id += 1
+            segment.from_date = dates[start_index]
+            segment.to_date = dates[end_index - 1]
+            segment.days = campaign_duration_days(segment.from_date, segment.to_date)
+            segment.views = sum(daily_views[start_index:end_index]) if row.views is not None else None
+            segment.rate = round(discounted_rate(gross_rate, discount_pct), 4)
+            segment.gross_cpm = round(gross_rate, 4) if buy_type == "CPM" else 0.0
+            segment.net_cpm = round(discounted_rate(gross_rate, discount_pct), 4) if buy_type == "CPM" else 0.0
+            if buy_type == "CPM":
+                gross_amount = sum(
+                    daily_views[index] * daily_rates[index] / 1000
+                    for index in range(start_index, end_index)
+                )
+            else:
+                gross_amount = sum(
+                    daily_rates[index] * weights[index]
+                    for index in range(start_index, end_index)
+                )
+            segment.gross_amount = round(gross_amount, 2)
+            segment.net_amount = round(gross_amount * max(0.0, 1 - (discount_pct / 100.0)), 2)
+            segment.cost = segment.net_amount
+            generated.append(segment)
+
+        # Preserve allocation totals exactly: allocation may have applied a later
+        # budget top-up or rounding before this display-only split is performed.
+        for attribute, total in (
+            ("gross_amount", float(row.gross_amount or 0)),
+            ("net_amount", float(row.net_amount or row.cost or 0)),
+            ("cost", float(row.cost or row.net_amount or 0)),
+        ):
+            allocated = round(sum(float(getattr(segment, attribute) or 0) for segment in generated[:-1]), 2)
+            setattr(generated[-1], attribute, round(total - allocated, 2))
+        split_rows.extend(generated)
+    return split_rows
+
+
 def default_phases(req: MediaPlanRequest) -> list[Phase]:
     if req.phases:
         return req.phases
@@ -1513,6 +1603,29 @@ def _objective_diverse_order(candidates: list[Candidate], objective: str) -> lis
     return ordered
 
 
+def _campaign_diverse_order(
+    candidates: list[Candidate],
+    used_slot_keys: set[str],
+    manual_slot_keys: set[str],
+) -> list[Candidate]:
+    """Prefer unused generated slots, but keep every normal candidate as a fallback.
+
+    This is deliberately applied only after the caller has already filtered candidates
+    for its country, phase, marketplace, comcat, objective, capacity, and budget
+    bucket. It therefore improves campaign-wide variety without changing those
+    allocation constraints. Manual selections are left in their original order.
+    """
+    preferred: list[Candidate] = []
+    fallback: list[Candidate] = []
+    for candidate in candidates:
+        key = slot_key(candidate.country, candidate.slot_code).lower()
+        if key in manual_slot_keys or key not in used_slot_keys:
+            preferred.append(candidate)
+        else:
+            fallback.append(candidate)
+    return [*preferred, *fallback]
+
+
 def _placement_priority(candidate: Candidate) -> float:
     text = f"{candidate.slot_code or ''} {candidate.slot_name or ''} {candidate.page or ''}".lower()
     priority = 0.0
@@ -1726,6 +1839,14 @@ def plan_media(
         (slot_key(row.country, row.slot_code), row.phase)
         for row in rows
         if row.slot_code
+    }
+    # Campaign-wide slot diversity is a preference, not an eligibility rule.
+    # Manual additions are deliberately excluded: operators retain full control
+    # over those placements.
+    campaign_generated_slot_keys = {
+        slot_key(row.country, row.slot_code).lower()
+        for row in rows
+        if row.slot_code and not row.manual
     }
     foc_slot_keys = {value for value in req.foc_slot_keys if value}
 
@@ -1999,6 +2120,8 @@ def plan_media(
         spent_total += net_amount
         spent_by_slot[slot_key_value] += net_amount
         used_slot_phases.add((slot_key_value, phase.name))
+        if slot_key_value.lower() not in manual_slot_keys:
+            campaign_generated_slot_keys.add(slot_key_value.lower())
         inventory_by_slot_phase[exact_inventory_key] = max(inventory_by_slot_phase[exact_inventory_key] - int(planned_views or 0), 0)
         return True
 
@@ -2154,7 +2277,11 @@ def plan_media(
                                 and (not comcat_name or _row_relevance_for_comcat(row, comcat_name) > 0)
                             )
                             remaining_target = max(target - already, 0)
-                            ranked = _objective_diverse_order(comcat_candidates, req.objective)
+                            ranked = _campaign_diverse_order(
+                                _objective_diverse_order(comcat_candidates, req.objective),
+                                campaign_generated_slot_keys,
+                                manual_slot_keys,
+                            )
                             base_goal = _per_country_min_lines(req) * brand_share * phase_share * marketplace_share * comcat_share
                             phase_goal = max(1, min(settings.max_lines_per_phase, round(base_goal)))
                             used_in_phase = len([
@@ -2198,7 +2325,11 @@ def plan_media(
                     or candidate.pricing_model == selected_slot_pricing_map[slot_key(candidate.country, candidate.slot_code)]
                 )
             ]
-        ranked = _objective_diverse_order(country_candidates, req.objective)
+        ranked = _campaign_diverse_order(
+            _objective_diverse_order(country_candidates, req.objective),
+            campaign_generated_slot_keys,
+            manual_slot_keys,
+        )
         for idx, candidate in enumerate(ranked):
             if have >= per_country_min or spent_total >= req.budget:
                 break
@@ -2517,6 +2648,11 @@ def plan_media(
                 )
                 line_id += 1
             allocated_offdeck = round(allocated_offdeck + slot_total, 2)
+
+    # A rate-card change should be visible as a distinct plan line. Do this only
+    # after all allocation, continuity, and objective balancing is complete so
+    # phase, marketplace, inventory, and budget constraints remain unchanged.
+    rows = split_rows_at_rate_changes(rows, slot_meta, req.discount_pct)
 
     on_deck_rows = [row for row in rows if str(row.buyType or "").upper() != "OFF-DECK"]
     on_deck_total = sum(float(row.cost or row.net_amount or 0) for row in on_deck_rows)
