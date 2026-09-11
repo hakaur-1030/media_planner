@@ -9,7 +9,7 @@ Source tables:
 - `noonbiadmon.admon_business_analytics.slot_base_data`
 - `noonbiadmon.admon_business_analytics.slot_rate_card_base`
 - `noonbiadmon.admon_business_analytics.campaign_booking_data_past`
-- `noonbiadmon.admon_business_analytics.adgroup_booked_delivered` (six-month slot eligibility)
+- `noonbiadmon.admon_business_analytics.adgroup_booked_delivered` (12-month slot eligibility; minimum 100 booked views)
 - `noonbiadmon.admon_business_analytics.campaign_delivery_data_past_performance`
 - `noonbiadmon.admon_business_analytics.forecasting`
 

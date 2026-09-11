@@ -1686,10 +1686,12 @@ function collectPlanningPayload(){
 
 function getSlotMarketplace(slot){
   const explicit=String(slot?.marketplace||'').trim().toLowerCase().replace(' ','_');
+  const text=((slot&&((slot.slot_name||'')+' '+(slot.slot_code||'')))||'').toLowerCase();
+  if(text.includes('supermall')||text.includes('super_mall')) return 'supermall';
+  if(text.includes('noon')) return 'core';
   if(['supermall','super_mall','super-mall','sm'].includes(explicit)) return 'supermall';
   if(['core','noon','marketplace'].includes(explicit)) return 'core';
-  const text=((slot&&((slot.slot_name||'')+' '+(slot.slot_code||'')))||'').toLowerCase();
-  return (text.includes('supermall')||text.includes('super_mall'))?'supermall':'core';
+  return '';
 }
 
 function manualSlotsForCountry(country){

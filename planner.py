@@ -178,11 +178,18 @@ def asset_from_slot(slot_code: str, slot_name: str | None) -> str:
 
 def marketplace_from_slot(slot_code: str, slot_name: str | None, explicit_marketplace: str | None = None) -> str:
     explicit = str(explicit_marketplace or "").strip().lower().replace(" ", "_")
+    code_text = f"{slot_name or ''} {slot_code or ''}".lower()
+    # Classification only; allocation priority always comes from the user's
+    # marketplace choice and requested Core/Supermall budget split.
+    if "supermall" in code_text or "super_mall" in code_text:
+        return "supermall"
+    if "noon" in code_text:
+        return "core"
     if explicit in {"supermall", "super_mall", "super-mall", "sm"}:
         return "supermall"
     if explicit in {"core", "noon", "marketplace"}:
         return "core"
-    return "supermall" if is_supermall(slot_code, slot_name) else "core"
+    return ""
 
 
 GENERIC_SLOT_TOKENS = {
@@ -1001,9 +1008,11 @@ def expand_candidates_for_countries(
                     scored_sources.append((page_similarity, similarity, score, candidate))
                 scored_sources.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
                 source_candidates = [item[3] for item in scored_sources[:3]]
-            if not source_candidates:
-                continue
-            source = max(source_candidates, key=lambda candidate: (candidate.brand_specific, _portfolio_score(candidate), candidate.views))
+            source = max(
+                source_candidates,
+                key=lambda candidate: (candidate.brand_specific, _portfolio_score(candidate), candidate.views),
+                default=None,
+            )
             for pricing_model in [
                 option
                 for option in pricing_options_for_meta(meta)
@@ -1030,31 +1039,35 @@ def expand_candidates_for_countries(
                             pricing_model,
                             settings.default_cpd if pricing_model == "CPD" else settings.default_cpm,
                         ),
-                        views=source.views,
-                        clicks=source.clicks,
-                        revenue=source.revenue,
-                        spends=source.spends,
-                    active_days=source.active_days,
-                    brand_specific=source.brand_specific,
-                    reach_score=source.reach_score * (1.02 if pricing_model == "CPM" else 1.0),
-                    conv_score=source.conv_score * (1.02 if pricing_model == "CPM" else 1.0),
-                    visibility_score=source.visibility_score * (1.02 if pricing_model == "CPM" else 1.0),
-                    ctr_score=source.ctr_score * (1.02 if pricing_model == "CPM" else 1.0),
-                    roas_score=source.roas_score * (1.02 if pricing_model == "CPM" else 1.0),
-                    brand_score=source.brand_score,
-                    comcat_score=source.comcat_score,
-                    trend_score=source.trend_score,
-                    confidence_score=source.confidence_score,
-                    final_score=source.final_score * (1.02 if pricing_model == "CPM" else 1.0),
-                    cpm=source.cpm,
-                    cpd=source.cpd,
-                    ctr=source.ctr,
-                    roas=source.roas,
-                    source_country=source.country,
-                    synthetic=True,
-                    explainability=source.explainability,
+                        views=source.views if source else settings.min_slot_views,
+                        clicks=source.clicks if source else 0,
+                        revenue=source.revenue if source else 0.0,
+                        spends=source.spends if source else 0.0,
+                        active_days=source.active_days if source else 1,
+                        brand_specific=source.brand_specific if source else False,
+                        reach_score=(source.reach_score if source else 0.35) * (1.02 if pricing_model == "CPM" else 1.0),
+                        conv_score=(source.conv_score if source else 0.20) * (1.02 if pricing_model == "CPM" else 1.0),
+                        visibility_score=(source.visibility_score if source else 0.35) * (1.02 if pricing_model == "CPM" else 1.0),
+                        ctr_score=(source.ctr_score if source else 0.0) * (1.02 if pricing_model == "CPM" else 1.0),
+                        roas_score=(source.roas_score if source else 0.0) * (1.02 if pricing_model == "CPM" else 1.0),
+                        brand_score=source.brand_score if source else 0.0,
+                        comcat_score=source.comcat_score if source else 0.35,
+                        trend_score=source.trend_score if source else 0.0,
+                        confidence_score=source.confidence_score if source else 0.25,
+                        final_score=(source.final_score if source else 0.35) * (1.02 if pricing_model == "CPM" else 1.0),
+                        cpm=source.cpm if source else None,
+                        cpd=source.cpd if source else None,
+                        ctr=source.ctr if source else None,
+                        roas=source.roas if source else None,
+                        source_country=source.country if source else country,
+                        synthetic=True,
+                        explainability=(
+                            source.explainability
+                            if source
+                            else ("Eligible booked and forecast inventory; no matching historical delivery, so this slot is ranked with low confidence.",)
+                        ),
+                    )
                 )
-            )
 
     deduped: dict[tuple[str, str, str], Candidate] = {}
     for candidate in sorted(expanded, key=lambda item: (not item.synthetic, item.brand_specific, _portfolio_score(item), item.views), reverse=True):

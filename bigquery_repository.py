@@ -13,7 +13,7 @@ from config import Settings
 from models import EditablePlanLine, MediaPlanRequest
 
 
-MIN_RECENT_BOOKED_VIEWS = 1_000
+MIN_RECENT_BOOKED_VIEWS = 100
 
 
 RUN_HEADERS = [
@@ -490,7 +490,7 @@ class BigQueryRepository:
         return booked
 
     def _fetch_recent_booked_views(self, req: MediaPlanRequest) -> dict[tuple[str, str], int]:
-        """Booked views by country/slot in the rolling six-month window ending yesterday."""
+        """Booked views by country/slot in the rolling 12-month window ending yesterday."""
         requested_countries = tuple(sorted(country_values(req.countries)))
         as_of_date = date.today()
         cache_key = (as_of_date, requested_countries)
@@ -538,7 +538,7 @@ class BigQueryRepository:
                 CAST(`{slot_field}` AS STRING) AS slot_code,
                 SUM(COALESCE(SAFE_CAST(`{booked_field}` AS FLOAT64), 0)) AS booked_views
             FROM `{table_id}`
-            WHERE DATE(`{date_field}`) >= DATE_SUB(@as_of_date, INTERVAL 6 MONTH)
+            WHERE DATE(`{date_field}`) >= DATE_SUB(@as_of_date, INTERVAL 12 MONTH)
               AND DATE(`{date_field}`) < @as_of_date
               {country_filter}
             GROUP BY 1, 2
@@ -642,7 +642,7 @@ class BigQueryRepository:
                     "rate_schedule": dict(rate_meta.get("cpm_rate_schedule") or {}),
                     "cpm_rate_schedule": dict(rate_meta.get("cpm_rate_schedule") or {}),
                     "cpd_rate_schedule": dict(rate_meta.get("cpd_rate_schedule") or {}),
-                    "booked_views_last_6_months": booked_views,
+                    "booked_views_last_12_months": booked_views,
                 }
             )
         return catalog
@@ -690,7 +690,7 @@ class BigQueryRepository:
                     "country": country,
                     "dimension": "",
                     "description": "",
-                    "booked_views_last_6_months": booked_views,
+                    "booked_views_last_12_months": booked_views,
                 }
             )
         slots.sort(key=lambda slot: (str(slot.get("country") or ""), str(slot.get("page") or "").lower(), str(slot.get("slot_name") or "").lower()))

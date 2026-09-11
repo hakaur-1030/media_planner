@@ -42,6 +42,7 @@ class RecentBookingEligibilityTest(unittest.TestCase):
         self.assertEqual(result, {("sa", "supermall_sa_sfu_1"): 765_776})
         sql = repo._query_records.call_args.args[0]
         self.assertIn("DATE(`dt`)", sql)
+        self.assertIn("INTERVAL 12 MONTH", sql)
         self.assertIn("`country` IS NOT NULL", sql)
         self.assertIn("TRIM(CAST(`country` AS STRING)) != ''", sql)
 

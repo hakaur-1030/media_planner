@@ -9,6 +9,7 @@ from planner import (
     MIN_CPD_BUDGET_USD,
     _date_exposure_weights,
     _objective_diverse_order,
+    marketplace_from_slot,
     _placement_kind,
     _slot_values_relevance_for_comcat,
     campaign_duration_days,
@@ -66,6 +67,11 @@ class PlannerRulesTest(unittest.TestCase):
         self.assertEqual(_placement_kind(reach_order[0]), "homepage")
         self.assertEqual({_placement_kind(row) for row in roas_order}, {"homepage", "clp", "other"})
 
+    def test_supermall_slot_code_overrides_legacy_core_metadata(self):
+        self.assertEqual(marketplace_from_slot("supermall_ae_sfu_1", "SFU 1", "core"), "supermall")
+        self.assertEqual(marketplace_from_slot("sa_noon_supermall_onsite_toggle", "Toggle", None), "supermall")
+        self.assertEqual(marketplace_from_slot("footer_promo", "Footer promo", None), "")
+
     def test_suggestions_are_not_capped_at_the_minimum_slot_count(self):
         req = self.request(5_000)
         historical, meta, inventory = [], {}, []
@@ -87,6 +93,37 @@ class PlannerRulesTest(unittest.TestCase):
 
         suggestions = suggest_slots(req, historical, inventory, meta, self.settings, limit=None)
         self.assertEqual(len(suggestions), 8)
+
+    def test_eligible_supermall_slot_without_delivery_history_is_still_suggested(self):
+        req = self.request(5_000)
+        historical = [{
+            "country": "ae", "slot_code": "mobile_clp_core", "views": 100_000,
+            "clicks": 1_000, "spends": 1_000, "revenue": 5_000, "active_days": 10,
+        }]
+        meta = {
+            ("ae", "mobile_clp_core"): {
+                "slot_code": "mobile_clp_core", "slot_name": "Core Mobile CLP",
+                "page": "CLP", "category": "Mobiles", "zone": "core_hero",
+                "pricing_options": ["CPM"], "cpm_rate": 10, "marketplace": "core",
+            },
+            ("ae", "supermall_ae_mobile_clp"): {
+                "slot_code": "supermall_ae_mobile_clp", "slot_name": "Supermall Mobile CLP",
+                "page": "CLP", "category": "Mobiles", "zone": "supermall_hero",
+                "pricing_options": ["CPM"], "cpm_rate": 10, "marketplace": "supermall",
+            },
+        }
+        inventory = [
+            {"dt": req.start_date + timedelta(days=day), "country": "ae", "slot_code": code, "available_views": 100_000}
+            for code in ("mobile_clp_core", "supermall_ae_mobile_clp")
+            for day in range(10)
+        ]
+
+        suggestions = suggest_slots(req, historical, inventory, meta, self.settings, limit=None)
+
+        supermall = [slot for slot in suggestions if slot["marketplace"] == "supermall"]
+        self.assertEqual(len(supermall), 1)
+        self.assertEqual(supermall[0]["slot_code"], "supermall_ae_mobile_clp")
+        self.assertEqual(supermall[0]["confidence_score"], 0.25)
 
     def test_nine_am_flight_counts_one_day_and_keeps_end_date_views(self):
         start = date(2026, 8, 21)
@@ -111,7 +148,7 @@ class PlannerRulesTest(unittest.TestCase):
         meta = {("ae", "mobile_clp"): {
             "slot_code": "mobile_clp", "slot_name": "Mobile CLP", "page": "CLP",
             "category": "Mobiles", "zone": "top", "pricing_options": ["CPM", "CPD"],
-            "cpm_rate": 10, "cpd_rate": 500,
+            "cpm_rate": 10, "cpd_rate": 500, "marketplace": "core",
         }}
         inventory = [
             {"dt": req.start_date + timedelta(days=i), "country": "ae", "slot_code": "mobile_clp", "available_views": 100_000}
@@ -130,7 +167,7 @@ class PlannerRulesTest(unittest.TestCase):
         meta = {("ae", "home_page_hero"): {
             "slot_code": "home_page_hero", "slot_name": "Homepage Hero", "page": "Home Page",
             "category": "Home Page", "zone": "top", "pricing_options": ["CPM", "CPD"],
-            "cpm_rate": 10, "cpd_rate": 500,
+            "cpm_rate": 10, "cpd_rate": 500, "marketplace": "core",
         }}
         inventory = [
             {"dt": req.start_date + timedelta(days=i), "country": "ae", "slot_code": "home_page_hero", "available_views": 100_000}
