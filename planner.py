@@ -471,6 +471,123 @@ def iter_dates(start: date, end: date):
         current += timedelta(days=1)
 
 
+def service_window_dates(start: date, end: date) -> list[date]:
+    """09:00-to-09:00 service windows represented by their starting date."""
+    if end <= start:
+        return [start]
+    return [start + timedelta(days=offset) for offset in range((end - start).days)]
+
+
+def row_service_dates(row: EditablePlanLine) -> set[date]:
+    return set(service_window_dates(row.from_date, row.to_date))
+
+
+def _repair_daily_continuity(
+    req: MediaPlanRequest,
+    rows: list[EditablePlanLine],
+    phases: list[Phase],
+    inventory_rows: list[dict],
+    slot_meta: dict[tuple[str, str], dict],
+) -> dict:
+    """Extend eligible CPM windows to cover service-day gaps without adding spend."""
+    expected_dates = set(service_window_dates(req.start_date, req.end_date))
+    phase_by_name = {phase.name: phase for phase in phases}
+    daily_inventory: dict[tuple[str, str, date], int] = defaultdict(int)
+    for inventory_row in inventory_rows:
+        inventory_date = inventory_row.get("dt")
+        if not isinstance(inventory_date, date):
+            continue
+        daily_inventory[
+            (
+                str(inventory_row.get("country") or ""),
+                slot_code_key(inventory_row.get("slot_code")),
+                inventory_date,
+            )
+        ] += max(int(inventory_row.get("available_views") or 0), 0)
+
+    paid_rows = [row for row in rows if str(row.buyType or "").upper() != "OFF-DECK"]
+    groups = sorted({(row.brand, row.country) for row in paid_rows})
+
+    def covered_dates(group_rows: list[EditablePlanLine]) -> set[date]:
+        covered: set[date] = set()
+        for group_row in group_rows:
+            covered.update(row_service_dates(group_row))
+        return covered & expected_dates
+
+    uncovered_before: dict[str, list[str]] = {}
+    uncovered_after: dict[str, list[str]] = {}
+    repaired: dict[str, list[str]] = defaultdict(list)
+
+    for brand, country in groups:
+        group_key = f"{brand}|{country}"
+        group_rows = [row for row in paid_rows if row.brand == brand and row.country == country]
+        gaps = sorted(expected_dates - covered_dates(group_rows))
+        if gaps:
+            uncovered_before[group_key] = [gap.isoformat() for gap in gaps]
+
+        for gap in gaps:
+            if gap in covered_dates(group_rows):
+                continue
+            extension_options: list[tuple[int, float, EditablePlanLine, date, date]] = []
+            for row in group_rows:
+                if normalize_pricing_model(row.buyType) != "CPM" or row.manual or row.locked:
+                    continue
+                phase = phase_by_name.get(row.phase)
+                if not phase or not (phase.from_date <= gap < phase.to_date):
+                    continue
+                proposed_from = min(row.from_date, gap)
+                proposed_to = max(row.to_date, gap + timedelta(days=1))
+                if proposed_from < phase.from_date or proposed_to > phase.to_date:
+                    continue
+                proposed_service_dates = service_window_dates(proposed_from, proposed_to)
+                proposed_dates = list(iter_dates(proposed_from, proposed_to))
+                proposed_daily_views = _distributed_daily_views(
+                    int(row.views or 0),
+                    len(proposed_dates),
+                    _date_exposure_weights(proposed_from, proposed_to),
+                )
+                if any(
+                    daily_inventory.get((country, slot_code_key(row.slot_code), service_date), 0) <= 0
+                    for service_date in proposed_service_dates
+                ) or any(
+                    planned_views > daily_inventory.get((country, slot_code_key(row.slot_code), inventory_date), 0)
+                    for inventory_date, planned_views in zip(proposed_dates, proposed_daily_views)
+                ):
+                    continue
+                meta = get_slot_meta(slot_meta, country, row.slot_code)
+                rate_schedule = meta.get("cpm_rate_schedule") or meta.get("rate_schedule") or {}
+                scheduled_rates = [
+                    float(rate_schedule.get(inventory_date.isoformat()) or meta.get("cpm_rate") or row.gross_cpm or row.rate or 0)
+                    for inventory_date in proposed_dates
+                ]
+                if scheduled_rates and any(abs(rate - scheduled_rates[0]) > 0.0001 for rate in scheduled_rates[1:]):
+                    continue
+                added_days = len(set(proposed_service_dates) - row_service_dates(row))
+                extension_options.append((added_days, -float(row.score or 0), row, proposed_from, proposed_to))
+
+            if not extension_options:
+                continue
+            _added_days, _negative_score, selected_row, proposed_from, proposed_to = min(
+                extension_options,
+                key=lambda option: (option[0], option[1], option[2].id),
+            )
+            selected_row.from_date = proposed_from
+            selected_row.to_date = proposed_to
+            selected_row.days = campaign_duration_days(proposed_from, proposed_to)
+            repaired[group_key].append(gap.isoformat())
+
+        remaining_gaps = sorted(expected_dates - covered_dates(group_rows))
+        if remaining_gaps:
+            uncovered_after[group_key] = [gap.isoformat() for gap in remaining_gaps]
+
+    return {
+        "continuity_status": "closest_feasible" if uncovered_after else "continuous",
+        "continuity_uncovered_before": uncovered_before,
+        "continuity_repaired_dates": dict(repaired),
+        "continuity_uncovered_after": uncovered_after,
+    }
+
+
 def _date_exposure_weights(start: date, end: date) -> list[float]:
     dates = list(iter_dates(start, end))
     if len(dates) <= 1:
@@ -2121,9 +2238,10 @@ def plan_media(
     # material budget remainder merely because the initial line quotas were met.
     topup_added = 0.0
     topup_iterations = 0
-    target_utilization = 0.995
-    while spent_total < req.budget * target_utilization and topup_iterations < 500:
-        remaining_budget = round(max(req.budget - spent_total, 0), 2)
+    continuity_budget_margin = round(min(req.budget * 0.05, 250.0), 2)
+    utilization_target_spend = round(max(req.budget - continuity_budget_margin, 0), 2)
+    while spent_total < utilization_target_spend and topup_iterations < 500:
+        remaining_budget = round(max(utilization_target_spend - spent_total, 0), 2)
         if remaining_budget <= 0:
             break
         phase_spend = defaultdict(float)
@@ -2208,6 +2326,11 @@ def plan_media(
         )
         topup_added = round(topup_added + added_net, 2)
         topup_iterations += 1
+
+    # Once only the permitted small budget margin remains, prefer uninterrupted
+    # day coverage. Extending a CPM flight window redistributes its existing views
+    # across more forecast-backed days without changing spend or requested splits.
+    continuity_diagnostics = _repair_daily_continuity(req, rows, phases, inventory_rows, slot_meta)
 
     # Objective is an allocation label rather than a different inventory pool.
     # Split paid rows when needed so Balanced plans match the requested
@@ -2438,7 +2561,9 @@ def plan_media(
         "offdeck_slot_count": len(selected_offdeck_slots),
         "budget_utilization_pct": round((on_deck_total / req.budget) * 100, 2) if req.budget > 0 else 0.0,
         "budget_topup_added": topup_added,
-        "budget_utilization_target_pct": 95.0,
+        "budget_utilization_target_pct": round((utilization_target_spend / req.budget) * 100, 2) if req.budget > 0 else 0.0,
+        "budget_utilization_target_amount_usd": utilization_target_spend,
+        "continuity_budget_margin_usd": continuity_budget_margin,
         "maximum_slot_budget_share_pct": round(MAX_SLOT_BUDGET_SHARE * 100, 2),
         "homepage_cpd_minimum_budget_usd": MIN_CPD_BUDGET_USD,
         "per_country_min": per_country_min,
@@ -2456,6 +2581,7 @@ def plan_media(
         "actual_objective_budget_split": actual_pct_split(dict(actual_objective_spend)),
         "country_row_counts": {country: len([row for row in rows if row.country == country and (row.slot_code or "").strip()]) for country in countries},
         "omitted_selected_slots": omitted_selected_slots,
+        **continuity_diagnostics,
     }
 
     return rows, diagnostics

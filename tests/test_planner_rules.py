@@ -2,7 +2,7 @@ from datetime import date, timedelta
 from types import SimpleNamespace
 import unittest
 
-from models import MediaPlanRequest
+from models import EditablePlanLine, MediaPlanRequest, Phase
 from planner import (
     Candidate,
     MAX_SLOT_BUDGET_SHARE,
@@ -11,9 +11,11 @@ from planner import (
     _objective_diverse_order,
     marketplace_from_slot,
     _placement_kind,
+    _repair_daily_continuity,
     _slot_values_relevance_for_comcat,
     campaign_duration_days,
     plan_media,
+    service_window_dates,
     suggest_slots,
 )
 
@@ -129,10 +131,43 @@ class PlannerRulesTest(unittest.TestCase):
         start = date(2026, 8, 21)
         end = date(2026, 8, 22)
         self.assertEqual(campaign_duration_days(start, end), 1)
+        self.assertEqual(service_window_dates(start, end), [start])
         weights = _date_exposure_weights(start, end)
         self.assertEqual(weights, [15 / 24, 9 / 24])
         self.assertEqual(sum(weights), 1.0)
         self.assertGreater(weights[-1], 0)
+
+    def test_continuity_extends_cpm_window_without_changing_spend(self):
+        start = date(2026, 9, 21)
+        end = date(2026, 9, 26)
+        req = MediaPlanRequest.model_validate({
+            "brand": "Test", "countries": ["ae"], "start_date": start,
+            "end_date": end, "budget": 5_000, "currency": "USD", "objective": "reach",
+        })
+        row = EditablePlanLine.model_validate({
+            "id": 1, "from": start, "to": start + timedelta(days=2),
+            "country": "ae", "page": "Home Page", "marketplace": "core",
+            "asset": "Hero", "days": 2, "buyType": "CPM", "rate": 10,
+            "net_cpm": 10, "views": 100_000, "cost": 1_000,
+            "net_amount": 1_000, "phase": "Full flight", "brand": "Test",
+            "stype": "reach", "slot_code": "home_hero", "score": 1,
+        })
+        inventory = [
+            {"dt": start + timedelta(days=offset), "country": "ae", "slot_code": "home_hero", "available_views": 100_000}
+            for offset in range(6)
+        ]
+
+        diagnostics = _repair_daily_continuity(
+            req,
+            [row],
+            [Phase.model_validate({"name": "Full flight", "from": start, "to": end})],
+            inventory,
+            {("ae", "home_hero"): {"cpm_rate": 10}},
+        )
+
+        self.assertEqual(row.to_date, end)
+        self.assertEqual(row.cost, 1_000)
+        self.assertEqual(diagnostics["continuity_status"], "continuous")
 
     def test_category_matching_allows_homepage_but_rejects_wrong_clp(self):
         self.assertGreater(_slot_values_relevance_for_comcat("Home Page", "Home Page", "hp_hero", "Hero", "Mobiles"), 0)
@@ -283,6 +318,8 @@ class PlannerRulesTest(unittest.TestCase):
             spend_by_slot[key] = spend_by_slot.get(key, 0) + float(row.cost or 0)
         self.assertLessEqual(max(spend_by_slot.values()), req.budget * MAX_SLOT_BUDGET_SHARE + 0.01)
         self.assertGreaterEqual(diagnostics["budget_utilization_pct"], 95)
+        self.assertEqual(diagnostics["continuity_budget_margin_usd"], 250)
+        self.assertEqual(diagnostics["budget_utilization_target_pct"], 97.5)
         self.assertLessEqual(abs(diagnostics["actual_phase_budget_split"]["Launch"] - 30), 1)
         self.assertLessEqual(abs(diagnostics["actual_marketplace_budget_split"]["core"] - 70), 1)
         self.assertLessEqual(abs(diagnostics["actual_objective_budget_split"]["reach"] - 60), 1)
