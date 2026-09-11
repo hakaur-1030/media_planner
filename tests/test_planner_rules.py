@@ -66,6 +66,28 @@ class PlannerRulesTest(unittest.TestCase):
         self.assertEqual(_placement_kind(reach_order[0]), "homepage")
         self.assertEqual({_placement_kind(row) for row in roas_order}, {"homepage", "clp", "other"})
 
+    def test_suggestions_are_not_capped_at_the_minimum_slot_count(self):
+        req = self.request(5_000)
+        historical, meta, inventory = [], {}, []
+        for index in range(8):
+            code = f"mobile_clp_{index}"
+            historical.append({
+                "country": "ae", "slot_code": code, "views": 100_000,
+                "clicks": 1_000, "spends": 1_000, "revenue": 5_000, "active_days": 10,
+            })
+            meta[("ae", code)] = {
+                "slot_code": code, "slot_name": code, "page": "CLP",
+                "category": "Mobiles", "zone": "shared_zone",
+                "pricing_options": ["CPM"], "cpm_rate": 10, "marketplace": "core",
+            }
+            inventory.extend(
+                {"dt": req.start_date + timedelta(days=day), "country": "ae", "slot_code": code, "available_views": 100_000}
+                for day in range(10)
+            )
+
+        suggestions = suggest_slots(req, historical, inventory, meta, self.settings, limit=None)
+        self.assertEqual(len(suggestions), 8)
+
     def test_nine_am_flight_counts_one_day_and_keeps_end_date_views(self):
         start = date(2026, 8, 21)
         end = date(2026, 8, 22)

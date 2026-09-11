@@ -1403,7 +1403,7 @@ def suggest_slots(
     inventory_rows: list[dict],
     slot_meta: dict[tuple[str, str], dict],
     settings,
-    limit: int = 10,
+    limit: int | None = 10,
 ) -> list[dict]:
     base_candidates = build_candidates(historical_rows, slot_meta, settings, req.marketplace)
     selected_slot_keys = {value for value in req.selected_slot_keys if value}
@@ -1423,7 +1423,6 @@ def suggest_slots(
     inventory = _inventory_by_slot_phase(req, inventory_rows)
     phases = default_phases(req)
     seen: set[str] = set()
-    seen_zone_category: set[tuple[str, str, str, str]] = set()
     suggestions: list[dict] = []
 
     candidates_by_slot: dict[str, list[Candidate]] = defaultdict(list)
@@ -1438,7 +1437,6 @@ def suggest_slots(
     ]
     country_orders: dict[str, list[str]] = {}
     requested_countries = [country for country in req.countries if country]
-    desired_per_country = max((limit + max(len(requested_countries), 1) - 1) // max(len(requested_countries), 1), 1)
     for country in [country for country in req.countries if country]:
         marketplace_buckets = {
             marketplace_name: _objective_diverse_order(
@@ -1452,7 +1450,11 @@ def suggest_slots(
             for marketplace_name, _share in _marketplace_splits(req)
         }
         country_order: list[str] = []
-        for marketplace_name in _weighted_label_sequence(_marketplace_splits(req), desired_per_country):
+        candidate_count = sum(len(bucket) for bucket in marketplace_buckets.values())
+        # Order the complete eligible pool. Previously only the first requested
+        # minimum was ordered; category/zone deduplication could then turn a
+        # six-slot target into only four visible recommendations.
+        for marketplace_name in _weighted_label_sequence(_marketplace_splits(req), candidate_count):
             bucket = marketplace_buckets.get(marketplace_name, [])
             candidate = bucket.pop(0) if bucket else next(
                 (other_bucket.pop(0) for other_bucket in marketplace_buckets.values() if other_bucket),
@@ -1482,16 +1484,7 @@ def suggest_slots(
         available = sum(inventory.get((candidate.country, candidate.slot_code, phase.name), 0) for phase in phases)
         if available <= 0:
             continue
-        zone_category_key = _category_zone_key(
-            candidate.country,
-            candidate.marketplace,
-            candidate.category,
-            candidate.zone,
-        )
-        if (candidate.category or candidate.zone) and zone_category_key in seen_zone_category:
-            continue
         seen.add(slot_key_value)
-        seen_zone_category.add(zone_category_key)
         suggestions.append(
             {
                 "slot_key": slot_key_value,
@@ -1523,7 +1516,7 @@ def suggest_slots(
                 "explainability": list(candidate.explainability),
             }
         )
-        if len(suggestions) >= limit:
+        if limit is not None and len(suggestions) >= limit:
             break
     return suggestions
 

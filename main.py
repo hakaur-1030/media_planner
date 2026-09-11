@@ -395,20 +395,33 @@ def slot_preselection(req: MediaPlanRequest, settings: Settings = Depends(get_se
     historical_rows = repo.fetch_historical_performance(req)
     inventory_rows = repo.fetch_inventory(req)
     slot_meta = repo.fetch_slot_meta(req)
-    suggestions = suggest_slots(req, historical_rows, inventory_rows, slot_meta, settings, limit=max(len(req.countries), 1) * (6 if req.budget <= 10000 else 10))
+    minimum_slot_count = max(len(req.countries), 1) * (6 if req.budget <= 10000 else 10)
+    suggestion_pool = suggest_slots(req, historical_rows, inventory_rows, slot_meta, settings, limit=None)
     available_slots = build_available_slots(req, inventory_rows, slot_meta)
     manual_inventory_rows = repo.fetch_inventory(req, enforce_eligibility=False)
     manual_slot_meta = repo.fetch_slot_meta(req, enforce_eligibility=False)
     manual_available_slots = build_available_slots(req, manual_inventory_rows, manual_slot_meta, include_zero=True)
     offdeck_slots = repo.fetch_offdeck_slots(req, enforce_eligibility=False)
-    preview_req = req.model_copy(deep=True)
-    preview_req.selected_slot_keys = [slot["slot_key"] for slot in suggestions]
-    preview_req.manual_slot_keys = []
-    preview_req.selected_slot_pricing = {
-        slot["slot_key"]: slot.get("pricing_model") or "CPM"
-        for slot in suggestions
-    }
-    preview_rows, preview_diagnostics = plan_media(preview_req, historical_rows, inventory_rows, slot_meta, settings)
+    preview_rows = []
+    preview_diagnostics = {}
+    suggestion_count = min(minimum_slot_count, len(suggestion_pool))
+    suggestions = suggestion_pool[:suggestion_count]
+    while suggestions:
+        preview_req = req.model_copy(deep=True)
+        preview_req.selected_slot_keys = [slot["slot_key"] for slot in suggestions]
+        preview_req.manual_slot_keys = []
+        preview_req.selected_slot_pricing = {
+            slot["slot_key"]: slot.get("pricing_model") or "CPM"
+            for slot in suggestions
+        }
+        preview_rows, preview_diagnostics = plan_media(preview_req, historical_rows, inventory_rows, slot_meta, settings)
+        if (
+            float(preview_diagnostics.get("budget_utilization_pct") or 0) >= 95.0
+            or len(suggestions) >= len(suggestion_pool)
+        ):
+            break
+        suggestion_count = min(len(suggestions) + max(len(req.countries), 1), len(suggestion_pool))
+        suggestions = suggestion_pool[:suggestion_count]
     preview_spend_by_slot: dict[str, float] = {}
     for row in preview_rows:
         key = f"{row.country}|{row.slot_code}"
@@ -431,6 +444,8 @@ def slot_preselection(req: MediaPlanRequest, settings: Settings = Depends(get_se
             "selected_countries": req.countries,
             "selected_comcats": req.comcats,
             "brand_tag": req.brand_tag,
+            "recommended_slot_count": len(suggestions),
+            "eligible_suggestion_pool_count": len(suggestion_pool),
         },
     }
 

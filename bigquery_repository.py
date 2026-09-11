@@ -499,10 +499,10 @@ class BigQueryRepository:
             return cached
 
         table_id = self.settings.adgroup_booked_delivered_table
-        date_field = self._field_name(
-            table_id,
-            "date", "dt", "event_date", "booking_date", "adgroup_date", "report_date",
-        )
+        # This source is partitioned and dated by `dt`. Keep this explicit so a
+        # similarly named column cannot be selected accidentally if the schema
+        # changes later.
+        date_field = self._field_name(table_id, "dt")
         slot_field = self._field_name(table_id, "slot_code", "slot", "placement_code")
         booked_field = self._field_name(
             table_id,
@@ -512,7 +512,12 @@ class BigQueryRepository:
         country_field = self._field_name(table_id, "country", "country_code", "market")
         missing = [
             label
-            for label, field in (("date", date_field), ("slot", slot_field), ("booked views", booked_field))
+            for label, field in (
+                ("dt", date_field),
+                ("country", country_field),
+                ("slot", slot_field),
+                ("booked views", booked_field),
+            )
             if not field
         ]
         if missing:
@@ -521,6 +526,12 @@ class BigQueryRepository:
             )
 
         country_select = f"CAST(`{country_field}` AS STRING)" if country_field else "''"
+        country_filter = (
+            f"AND `{country_field}` IS NOT NULL "
+            f"AND TRIM(CAST(`{country_field}` AS STRING)) != ''"
+            if country_field
+            else "AND FALSE"
+        )
         sql = f"""
             SELECT
                 {country_select} AS country,
@@ -529,6 +540,7 @@ class BigQueryRepository:
             FROM `{table_id}`
             WHERE DATE(`{date_field}`) >= DATE_SUB(@as_of_date, INTERVAL 6 MONTH)
               AND DATE(`{date_field}`) < @as_of_date
+              {country_filter}
             GROUP BY 1, 2
         """
         rows = self._query_records(
@@ -541,7 +553,9 @@ class BigQueryRepository:
         countries = set(requested_countries)
         for row in rows:
             country = infer_country(row)
-            if countries and country and country not in countries:
+            if not country:
+                continue
+            if countries and country not in countries:
                 continue
             slot_code = slot_code_key(get_first(row, "slot_code", "slot"))
             if not slot_code:
@@ -576,7 +590,7 @@ class BigQueryRepository:
             if recent_booked_views is not None:
                 booked_views = recent_booked_views.get(
                     (country, normalized_slot_code),
-                    recent_booked_views.get(("", normalized_slot_code), 0),
+                    0,
                 )
                 if booked_views < MIN_RECENT_BOOKED_VIEWS:
                     continue
@@ -660,7 +674,7 @@ class BigQueryRepository:
             if recent_booked_views is not None:
                 booked_views = recent_booked_views.get(
                     (country, normalized_key),
-                    recent_booked_views.get(("", normalized_key), 0),
+                    0,
                 )
                 if booked_views < MIN_RECENT_BOOKED_VIEWS:
                     continue
