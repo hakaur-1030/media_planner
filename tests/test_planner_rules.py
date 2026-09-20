@@ -11,6 +11,7 @@ from planner import (
     _cpd_day_weights,
     _campaign_diverse_order,
     _objective_diverse_order,
+    maximum_slot_budget,
     marketplace_from_slot,
     _placement_kind,
     _repair_daily_continuity,
@@ -71,6 +72,12 @@ class PlannerRulesTest(unittest.TestCase):
         self.assertEqual(_placement_kind(roas_order[0]), "clp")
         self.assertEqual(_placement_kind(reach_order[0]), "homepage")
         self.assertEqual({_placement_kind(row) for row in roas_order}, {"homepage", "clp", "other"})
+
+    def test_supermall_slots_are_exempt_from_the_core_per_slot_budget_cap(self):
+        req = self.request(budget=10_000)
+
+        self.assertEqual(maximum_slot_budget(req, "core"), 10_000 * MAX_SLOT_BUDGET_SHARE)
+        self.assertEqual(maximum_slot_budget(req, "supermall"), 10_000)
 
     def test_campaign_diversity_prefers_unused_generated_slots_but_not_manual_slots(self):
         used = candidate("used_home", "Home Page", "Home Page", 0.9)

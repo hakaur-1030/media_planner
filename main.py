@@ -192,16 +192,13 @@ def annotate_split_diagnostics(diagnostics: dict) -> None:
 
 
 def require_split_tolerance(diagnostics: dict) -> None:
-    """Do not present a plan that breaches the agreed 10-point split limit."""
+    """Record split deviations without preventing the user from reviewing a plan.
+
+    A plan with an infeasible requested split is still useful as an editable draft.
+    The client presents any deviation greater than 10 percentage points with the
+    specific feasibility reason before the user reviews the final plan.
+    """
     annotate_split_diagnostics(diagnostics)
-    if diagnostics["split_deviation_notices"]:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "message": "The requested budget splits are not feasible within the allowed 10 percentage-point deviation.",
-                "diagnostics": diagnostics,
-            },
-        )
 
 
 def validate_planning_request(req: MediaPlanRequest, *, allow_past_dates: bool = False) -> None:

@@ -223,6 +223,21 @@ MIN_CPD_BUDGET_USD = 15_000.0
 MAX_SLOT_BUDGET_SHARE = 0.35
 
 
+def maximum_slot_budget(req: MediaPlanRequest, marketplace: str | None) -> float:
+    """Return the campaign spend a single slot may receive.
+
+    Core inventory retains the diversification guardrail. Supermall inventory
+    is intentionally exempt so scarce eligible Supermall placements can absorb
+    the requested marketplace share, while the overall campaign budget remains
+    the absolute ceiling.
+    """
+    normalized_marketplace = str(marketplace or "").strip().lower().replace("-", "_").replace(" ", "_")
+    campaign_budget = max(float(req.budget or 0), 0)
+    if normalized_marketplace in {"supermall", "super_mall", "sm"}:
+        return campaign_budget
+    return campaign_budget * MAX_SLOT_BUDGET_SHARE
+
+
 def _slot_tokens(slot_code: str, slot_name: str | None) -> list[str]:
     text = f"{slot_name or ''} {slot_code or ''}".lower()
     tokens = [
@@ -1929,10 +1944,11 @@ def plan_media(
 
         buy_type = candidate.pricing_model
         is_foc = slot_key_value in foc_slot_keys
-        slot_budget_cap = max(req.budget * MAX_SLOT_BUDGET_SHARE, 0)
+        slot_budget_cap = maximum_slot_budget(req, candidate.marketplace)
         slot_budget_remaining = max(slot_budget_cap - spent_by_slot[slot_key_value], 0)
         if not is_foc and slot_budget_remaining <= 0:
-            return reject(f"This slot has reached the maximum {MAX_SLOT_BUDGET_SHARE:.0%} share of the on-deck budget.")
+            cap_description = "campaign budget" if candidate.marketplace == "supermall" else f"maximum {MAX_SLOT_BUDGET_SHARE:.0%} share of the on-deck budget"
+            return reject(f"This slot has reached the {cap_description}.")
         meta = get_slot_meta(slot_meta, candidate.country, candidate.slot_code)
         if buy_type == "CPD":
             if not slot_has_rate_for_model(meta, "CPD", row_from, row_to, settings.default_cpd):
@@ -2036,7 +2052,8 @@ def plan_media(
                 2,
             )
             if allocation_remaining <= 0:
-                return reject(f"The campaign budget or this slot's {MAX_SLOT_BUDGET_SHARE:.0%} budget cap was fully allocated.")
+                cap_description = "campaign budget" if candidate.marketplace == "supermall" else f"{MAX_SLOT_BUDGET_SHARE:.0%} budget cap"
+                return reject(f"The campaign budget or this slot's {cap_description} was fully allocated.")
             if buy_type == "CPM":
                 capped_views = floor_views_to_block(int(allocation_remaining * 1000 / max(rate, 0.01)))
                 capped_views = min(capped_views, floor_views_to_block(available))
@@ -2069,7 +2086,8 @@ def plan_media(
                         settings.default_cpm,
                     )
                 if planned_views < settings.min_slot_views or spent_total + net_amount > req.budget + 1e-9 or spent_by_slot[slot_key_value] + net_amount > slot_budget_cap + 1e-9:
-                    return reject(f"The slot could not fit within the remaining USD {allocation_remaining:,.2f} allowed by the campaign and 35% slot cap.")
+                    cap_description = "campaign budget" if candidate.marketplace == "supermall" else f"{MAX_SLOT_BUDGET_SHARE:.0%} slot cap"
+                    return reject(f"The slot could not fit within the remaining USD {allocation_remaining:,.2f} allowed by the campaign and {cap_description}.")
             else:
                 cpd_days = service_window_dates(row_from, row_to)
                 cpd_weights = _cpd_day_weights(row_from, row_to)
@@ -2392,7 +2410,7 @@ def plan_media(
             remaining_views = floor_views_to_block(inventory_by_slot_phase.get(inventory_key, 0))
             net_cpm = float(existing_row.net_cpm or existing_row.rate or 0)
             existing_slot_key = slot_key(existing_row.country, existing_row.slot_code)
-            slot_budget_remaining = round(max(req.budget * MAX_SLOT_BUDGET_SHARE - spent_by_slot[existing_slot_key], 0), 2)
+            slot_budget_remaining = round(max(maximum_slot_budget(req, existing_row.marketplace) - spent_by_slot[existing_slot_key], 0), 2)
             if remaining_views < 100 or net_cpm <= 0 or min(remaining_budget, slot_budget_remaining) + 1e-9 < net_cpm * 0.1:
                 continue
             phase_target = req.budget * phase_splits.get(existing_row.phase, 0)
@@ -2701,7 +2719,7 @@ def plan_media(
             return f"No eligible {dimension} inventory was available for '{name}' after country, date, marketplace, booking, and category filters."
         return (
             f"The eligible {dimension} inventory for '{name}' could not absorb its requested share "
-            "after rate-card availability, CPD daily minimums, CPM minimum view blocks, selected slots, and the 35% per-slot budget cap were applied."
+            "after rate-card availability, CPD daily minimums, CPM minimum view blocks, selected slots, and applicable per-slot budget caps were applied."
         )
 
     split_constraint_reasons = {
@@ -2733,6 +2751,7 @@ def plan_media(
         "budget_utilization_target_amount_usd": utilization_target_spend,
         "continuity_budget_margin_usd": continuity_budget_margin,
         "maximum_slot_budget_share_pct": round(MAX_SLOT_BUDGET_SHARE * 100, 2),
+        "supermall_slot_budget_cap_exempt": True,
         "homepage_cpd_minimum_budget_usd": MIN_CPD_BUDGET_USD,
         "countries": countries,
         "marketplace": req.marketplace,

@@ -582,10 +582,10 @@ td.mono{font-family:var(--mono);font-size:11px}
     <div class="error-dialog-message" id="errorDialogMessage"></div>
     <div class="error-dialog-meta" id="errorDialogMeta"></div>
     <details class="error-dialog-tech" id="errorDialogTechnicalWrap">
-      <summary>Technical error details</summary>
+      <summary id="errorDialogTechnicalSummary">Technical error details</summary>
       <pre id="errorDialogTechnical"></pre>
     </details>
-    <div class="btn-row"><button class="btn pri" type="button" onclick="closeErrorDialog()">Close</button></div>
+    <div class="btn-row"><button class="btn pri" id="errorDialogCloseButton" type="button" onclick="closeErrorDialog()">Close</button></div>
   </div>
 </div>
 <script>
@@ -1070,17 +1070,27 @@ function escapeHtml(value){
 function apiErrorFromResponse(data,fallback,raw='',response=null){
   const detail=data&&data.detail;
   const structured=detail&&typeof detail==='object';
-  const error=new Error((structured&&detail.message)||fallback);
+  // A plain 503 is returned by the serving platform before FastAPI can attach
+  // its normal BigQuery/application diagnostics. Do not expose that generic
+  // response to planners as it gives them no useful next step.
+  const platformUnavailable=Number(response&&response.status)===503&&!structured;
+  const error=new Error(
+    (structured&&detail.message)
+    || (platformUnavailable?'We are facing an issue connecting to BigQuery. Please click Generate again.':'')
+    || fallback
+  );
   const allocationNotices=structured&&detail.diagnostics&&detail.diagnostics.split_deviation_notices;
   const allocationDetail=Array.isArray(allocationNotices)&&allocationNotices.length
     ? allocationNotices.map(item=>`${item.dimension} split '${item.name}': requested ${Number(item.requested_pct).toFixed(1)}%, closest feasible ${Number(item.actual_pct).toFixed(1)}% (deviation ${Number(item.deviation_pct).toFixed(1)} percentage points). Reason: ${item.reason}`).join('\n\n')
     : '';
   const diagnostics=structured&&detail.diagnostics?JSON.stringify(detail.diagnostics,null,2):'';
-  error.technicalDetail=(structured&&detail.technical_detail)||allocationDetail||diagnostics||(typeof detail==='string'?detail:raw)||'';
-  error.title=allocationDetail?'Requested split cannot be met':'';
+  error.technicalDetail=platformUnavailable
+    ? 'The service did not return additional diagnostics. Click Generate again; if the issue continues, contact Data/BI support.'
+    : ((structured&&detail.technical_detail)||allocationDetail||diagnostics||(typeof detail==='string'?detail:raw)||'');
+  error.title=allocationDetail?'Requested split cannot be met':(platformUnavailable?'BigQuery connection issue':'');
   error.reference=(structured&&detail.reference)||'';
   error.contact=(structured&&detail.contact)||'';
-  error.source=(structured&&detail.source)||'';
+  error.source=(structured&&detail.source)||(platformUnavailable?'planning data service':'');
   error.endpoint=(structured&&detail.endpoint)||(response&&new URL(response.url).pathname)||'';
   error.status=(response&&response.status)||'';
   return error;
@@ -1105,12 +1115,33 @@ function showErrorDialog(error,fallback='Unable to complete the request'){
   const technical=String(value.technicalDetail||(isNetworkError?value.message:'')||'').trim();
   const technicalWrap=document.getElementById('errorDialogTechnicalWrap');
   technicalWrap.style.display=technical?'block':'none';
-  technicalWrap.open=Boolean(technical && (value.status>=500 || value.source==='bigquery'));
+  technicalWrap.open=Boolean(technical && (value.status>=500 || value.source==='bigquery' || value.openDetails));
+  document.getElementById('errorDialogTechnicalSummary').textContent=value.detailsLabel||'Technical error details';
   document.getElementById('errorDialogTechnical').textContent=technical;
+  document.getElementById('errorDialogCloseButton').textContent=value.confirmText||'Close';
   backdrop.classList.add('show');
 }
 
 function closeErrorDialog(){ document.getElementById('errorDialogBackdrop')?.classList.remove('show'); }
+
+function showAllocationWarnings(diagnostics){
+  const warningDetails=[];
+  if((diagnostics.omitted_selected_slots||[]).length){
+    warningDetails.push(...diagnostics.omitted_selected_slots
+      .map(item=>`Unplaced slot — ${item.slot_name} (${item.buy_type}): ${item.reason}`));
+  }
+  if((diagnostics.split_deviation_notices||[]).length){
+    warningDetails.push(...diagnostics.split_deviation_notices
+      .map(item=>`${item.dimension} split '${item.name}': requested ${Number(item.requested_pct).toFixed(1)}%, received ${Number(item.actual_pct).toFixed(1)}% (deviation ${Number(item.deviation_pct).toFixed(1)} percentage points). Reason: ${item.reason}`));
+  }
+  if(!warningDetails.length) return;
+  const warning=new Error('Plan generated with allocation deviations. Select “OK, review plan” to inspect and edit the final plan.');
+  warning.technicalDetail=warningDetails.join('\n\n');
+  warning.detailsLabel='Allocation deviation details';
+  warning.confirmText='OK, review plan';
+  warning.openDetails=true;
+  showErrorDialog(warning,'Plan generated with allocation warnings');
+}
 
 function brandResultHtml(label,value){
   return `<div class="brand-result" onclick='setBrandValue(${JSON.stringify(String(value||''))})'>${escapeHtml(label)}</div>`;
@@ -2384,20 +2415,7 @@ async function buildPlan(){
     S.rows=normalizeLoadedRows(data.rows||[]);
     S.phFilter='All';
     nav(5);
-    const warningDetails=[];
-    if((S.planDiagnostics.omitted_selected_slots||[]).length){
-      warningDetails.push(...S.planDiagnostics.omitted_selected_slots
-        .map(item=>`Unplaced slot — ${item.slot_name} (${item.buy_type}): ${item.reason}`));
-    }
-    if((S.planDiagnostics.split_deviation_notices||[]).length){
-      warningDetails.push(...S.planDiagnostics.split_deviation_notices
-        .map(item=>`${item.dimension} split '${item.name}': requested ${Number(item.requested_pct).toFixed(1)}%, received ${Number(item.actual_pct).toFixed(1)}% (deviation ${Number(item.deviation_pct).toFixed(1)} percentage points). Reason: ${item.reason}`));
-    }
-    if(warningDetails.length){
-      const warning=new Error('Plan generated with allocation constraints. Review the split and slot details below.');
-      warning.technicalDetail=warningDetails.join('\n\n');
-      showErrorDialog(warning,'Plan generated with allocation warnings');
-    }
+    showAllocationWarnings(S.planDiagnostics);
   }catch(e){
     document.getElementById('navChip').textContent='Plan failed';
     showErrorDialog(e,'Unable to create media plan');
@@ -2714,9 +2732,11 @@ async function regeneratePlan(){
     if(!res.ok){ throw apiErrorFromResponse(data,'Unable to regenerate plan',raw,res); }
     S.planId=(data.summary&&data.summary.plan_id)||S.planId;
     S.planCode=(data.summary&&data.summary.sheet_plan_code)||S.planId||S.planCode;
+    S.planDiagnostics=data.diagnostics||{};
     S.rows=normalizeLoadedRows(data.rows||[]);
     S.excludedSlotKeys=[];
     renderAll();
+    showAllocationWarnings(S.planDiagnostics);
   }catch(e){
     document.getElementById('navChip').textContent='Regeneration failed';
     showErrorDialog(e,'Unable to regenerate plan');
