@@ -1755,6 +1755,11 @@ def suggest_slots(
                 "zone": candidate.zone or "",
                 "dimension": candidate.dimension or "",
                 "pricing_options": list(dict.fromkeys([option.pricing_model for option in slot_options] or [candidate.pricing_model])),
+                # Candidates are constructed only from the rate-validated
+                # eligible catalogue. Keep that status on the recommendation
+                # so the UI cannot inherit an unrelated manual-catalogue
+                # unavailable flag for the same slot.
+                "rate_available": True,
                 "pricing_model": candidate.pricing_model,
                 "cpm_rate": round(cpm_candidate.slot_rate or 0.0, 4) if cpm_candidate else 0.0,
                 "net_cpm": round(discounted_rate(cpm_candidate.slot_rate or 0.0, req.discount_pct), 4) if cpm_candidate else 0.0,

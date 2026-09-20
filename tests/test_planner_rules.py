@@ -159,6 +159,7 @@ class PlannerRulesTest(unittest.TestCase):
 
         suggestions = suggest_slots(req, historical, inventory, meta, self.settings, limit=None)
         self.assertEqual(len(suggestions), 8)
+        self.assertTrue(all(slot["rate_available"] for slot in suggestions))
 
     def test_eligible_supermall_slot_without_delivery_history_is_still_suggested(self):
         req = self.request(5_000)

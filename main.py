@@ -362,6 +362,7 @@ def build_available_slots(req: MediaPlanRequest, inventory_rows, slot_meta, incl
                 "type": str(meta.get("type") or meta.get("pricing_model") or "CPM").strip(),
                 "pricing_model": str(meta.get("pricing_model") or "CPM").strip(),
                 "pricing_options": list(meta.get("pricing_options") or [str(meta.get("pricing_model") or "CPM").strip()]),
+                "rate_available": bool(meta.get("rate_available", True)),
                 "rate": float(meta.get("rate") or 0) or 0.0,
                 "cpm_rate": cpm_rate,
                 "cpd_rate": cpd_rate,
