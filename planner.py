@@ -1208,18 +1208,22 @@ def expand_candidates_for_countries(
             if not slot_code or (country, slot_code) in direct_by_key:
                 continue
             slot_name = meta.get("slot_name")
+            target_marketplace = marketplace_from_slot(slot_code, slot_name, meta.get("marketplace"))
             target_page = _page_key(meta.get("category"), meta.get("page"))
             target_is_generic = _is_generic_page(meta.get("category"), meta.get("page"))
             target_relevance = _slot_comcat_relevance(meta.get("category") or meta.get("page"), slot_code, slot_name, req)
             target_page_is_relevant = bool(target_page and target_page in relevant_pages)
-            if target_relevance <= 0 and not target_is_generic and not target_page_is_relevant:
+            target_is_supermall_fallback = _is_supermall_noncategory_placement(
+                target_marketplace, meta.get("page"), meta.get("category"), slot_name, slot_code
+            )
+            if target_relevance <= 0 and not target_is_generic and not target_page_is_relevant and not target_is_supermall_fallback:
                 continue
             signature = _slot_signature(slot_code, slot_name)
             source_candidates = [
                 candidate
                 for candidate in source_groups.get(signature, [])
                 if candidate.country != country
-                and candidate.marketplace == marketplace_from_slot(slot_code, slot_name, meta.get("marketplace"))
+                and candidate.marketplace == target_marketplace
                 and (
                     _slot_comcat_relevance(candidate.category, candidate.slot_code, candidate.slot_name, req) > 0
                     or (target_page_is_relevant and _page_key(candidate.category, candidate.page) == target_page)
@@ -1232,7 +1236,7 @@ def expand_candidates_for_countries(
                 for candidate in candidates:
                     if candidate.country == country:
                         continue
-                    if candidate.marketplace != marketplace_from_slot(slot_code, slot_name, meta.get("marketplace")):
+                    if candidate.marketplace != target_marketplace:
                         continue
                     candidate_page = _page_key(candidate.category, candidate.page)
                     candidate_relevance = _slot_comcat_relevance(candidate.category, candidate.slot_code, candidate.slot_name, req)
@@ -1584,9 +1588,9 @@ def _candidate_score(candidate: Candidate, objective: str) -> float:
     return base_score + placement_bonus
 
 
-def _placement_kind(candidate: Candidate) -> str:
-    """Classify the two placement families that campaign objective controls."""
-    values = [candidate.page, candidate.category, candidate.slot_name, candidate.slot_code]
+def _placement_kind_from_values(page: str | None, category: str | None, slot_name: str | None, slot_code: str | None) -> str:
+    """Classify the placement family without applying campaign eligibility."""
+    values = [page, category, slot_name, slot_code]
     normalized_values = {
         re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
         for value in values
@@ -1603,6 +1607,43 @@ def _placement_kind(candidate: Candidate) -> str:
     return "other"
 
 
+def _placement_kind(candidate: Candidate) -> str:
+    """Classify the two placement families that campaign objective controls."""
+    return _placement_kind_from_values(candidate.page, candidate.category, candidate.slot_name, candidate.slot_code)
+
+
+def _is_supermall_noncategory_placement(
+    marketplace: str | None,
+    page: str | None,
+    category: str | None,
+    slot_name: str | None,
+    slot_code: str | None,
+) -> bool:
+    normalized_marketplace = str(marketplace or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return normalized_marketplace in {"supermall", "super_mall", "sm"} and _placement_kind_from_values(
+        page, category, slot_name, slot_code
+    ) in {"homepage", "other"}
+
+
+def _candidate_matches_comcat(candidate: Candidate, comcat: str) -> bool:
+    """Keep Supermall homepage/non-category inventory in the allocation universe."""
+    return (
+        _slot_relevance_for_comcat(candidate, comcat) > 0
+        or _is_supermall_noncategory_placement(
+            candidate.marketplace, candidate.page, candidate.category, candidate.slot_name, candidate.slot_code
+        )
+    )
+
+
+def _row_matches_comcat(row: EditablePlanLine, comcat: str) -> bool:
+    return (
+        _row_relevance_for_comcat(row, comcat) > 0
+        or _is_supermall_noncategory_placement(
+            row.marketplace, row.page, row.category, row.slot_name, row.slot_code
+        )
+    )
+
+
 def _objective_diverse_order(candidates: list[Candidate], objective: str) -> list[Candidate]:
     """Rank by objective while retaining homepage, CLP and other-page inventory."""
     ranked = sorted(
@@ -1611,7 +1652,12 @@ def _objective_diverse_order(candidates: list[Candidate], objective: str) -> lis
         reverse=True,
     )
     normalized = normalize_objective(objective)
-    if normalized == "visibility":
+    supermall_only = bool(candidates) and all(candidate.marketplace == "supermall" for candidate in candidates)
+    if supermall_only:
+        # When multiple Supermall page families exist, prevent objective scoring
+        # from collapsing the plan into only homepage or only CLP placements.
+        cycle = ["homepage", "clp", "other"]
+    elif normalized == "visibility":
         cycle = ["homepage", "homepage", "homepage", "clp", "other"]
     elif normalized in {"roas", "ctr"}:
         cycle = ["clp", "clp", "clp", "homepage", "other"]
@@ -1691,7 +1737,7 @@ def suggest_slots(
             or candidate.pricing_model != "CPD"
             or _placement_kind(candidate) != "homepage"
         )
-        and (not req.comcats or any(_slot_relevance_for_comcat(candidate, comcat) > 0 for comcat in req.comcats))
+        and (not req.comcats or any(_candidate_matches_comcat(candidate, comcat) for comcat in req.comcats))
     ]
     inventory = _inventory_by_slot_phase(req, inventory_rows)
     phases = default_phases(req)
@@ -1829,7 +1875,7 @@ def plan_media(
                 or candidate.pricing_model != "CPD"
                 or _placement_kind(candidate) != "homepage"
             )
-            and (not req.comcats or any(_slot_relevance_for_comcat(candidate, comcat) > 0 for comcat in req.comcats))
+            and (not req.comcats or any(_candidate_matches_comcat(candidate, comcat) for comcat in req.comcats))
         )
     ]
     if selected_slot_keys:
@@ -2296,7 +2342,7 @@ def plan_media(
                         comcat_candidates = [
                             candidate
                             for candidate in marketplace_candidates
-                            if not comcat_name or _slot_relevance_for_comcat(candidate, comcat_name) > 0
+                            if not comcat_name or _candidate_matches_comcat(candidate, comcat_name)
                         ]
                         if not comcat_candidates:
                             continue
@@ -2312,7 +2358,7 @@ def plan_media(
                                 and row.brand == brand_name
                                 and row.phase == phase.name
                                 and row.stype == stype
-                                and (not comcat_name or _row_relevance_for_comcat(row, comcat_name) > 0)
+                                and (not comcat_name or _row_matches_comcat(row, comcat_name))
                             )
                             remaining_target = max(target - already, 0)
                             ranked = _campaign_diverse_order(
@@ -2343,7 +2389,7 @@ def plan_media(
                                 and row.brand == brand_name
                                 and row.phase == phase.name
                                 and row.stype == stype
-                                and (not comcat_name or _row_relevance_for_comcat(row, comcat_name) > 0)
+                                and (not comcat_name or _row_matches_comcat(row, comcat_name))
                             ])
                             for candidate in ranked:
                                 if used_in_phase >= phase_goal:

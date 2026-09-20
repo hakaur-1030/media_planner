@@ -10,6 +10,7 @@ from planner import (
     _date_exposure_weights,
     _cpd_day_weights,
     _campaign_diverse_order,
+    _candidate_matches_comcat,
     _objective_diverse_order,
     maximum_slot_budget,
     marketplace_from_slot,
@@ -72,6 +73,23 @@ class PlannerRulesTest(unittest.TestCase):
         self.assertEqual(_placement_kind(roas_order[0]), "clp")
         self.assertEqual(_placement_kind(reach_order[0]), "homepage")
         self.assertEqual({_placement_kind(row) for row in roas_order}, {"homepage", "clp", "other"})
+
+    def test_supermall_noncategory_slots_remain_eligible_for_the_requested_comcat(self):
+        supermall_presearch = candidate("supermall_search_results", "Search Results", "Search Results")
+        core_presearch = candidate("core_search_results", "Search Results", "Search Results")
+
+        self.assertTrue(_candidate_matches_comcat(supermall_presearch, "Fragrance"))
+        self.assertFalse(_candidate_matches_comcat(core_presearch, "Fragrance"))
+
+    def test_supermall_diversity_cycles_across_page_families_before_repeating(self):
+        clp_one = candidate("supermall_clp_one", "CLP", "Fragrance", 0.95)
+        clp_two = candidate("supermall_clp_two", "CLP", "Fragrance", 0.90)
+        homepage = candidate("supermall_homepage", "Home Page", "Home Page", 0.70)
+        other = candidate("supermall_presearch", "Presearch", "Presearch", 0.60)
+
+        ordered = _objective_diverse_order([clp_one, clp_two, homepage, other], "roas")
+
+        self.assertEqual([_placement_kind(item) for item in ordered[:3]], ["homepage", "clp", "other"])
 
     def test_supermall_slots_are_exempt_from_the_core_per_slot_budget_cap(self):
         req = self.request(budget=10_000)
