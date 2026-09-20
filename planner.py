@@ -52,7 +52,7 @@ def inclusive_days(start: date, end: date) -> int:
 
 
 def campaign_duration_days(start: date, end: date) -> int:
-    """Duration for 09:00 start/end timestamps represented as date inputs."""
+    """09:00-to-09:00 service days; the end date is the closing boundary."""
     return max((end - start).days, 1)
 
 
@@ -119,9 +119,9 @@ def slot_rate_for_model(meta: dict | None, model: str, fallback_rate: float | No
     meta = meta or {}
     model = normalize_pricing_model(model)
     if model == "CPD":
-        value = float(meta.get("cpd_rate") or 0) or fallback_rate
+        value = float(meta.get("cpd_rate") or 0)
     else:
-        value = float(meta.get("cpm_rate") or 0) or fallback_rate
+        value = float(meta.get("cpm_rate") or 0)
     return float(value) if value and value > 0 else None
 
 
@@ -136,11 +136,23 @@ def slot_has_rate_for_model(
     model = normalize_pricing_model(model)
     schedule = meta.get("cpd_rate_schedule") if model == "CPD" else meta.get("cpm_rate_schedule") or meta.get("rate_schedule")
     if start and end and isinstance(schedule, dict):
-        if any(float(schedule.get(dt.isoformat()) or 0) > 0 for dt in iter_dates(start, end)):
+        daily_window = meta.get(f"{model.lower()}_daily_rate_window") or {}
+        daily_start = str(daily_window.get("start") or "")
+        daily_end = str(daily_window.get("end") or "")
+        for dt in service_window_dates(start, end):
+            if daily_start and daily_end and daily_start <= dt.isoformat() <= daily_end:
+                # Q4 2026 is an official daily card: every Q4 service date
+                # must have its own rate, rather than borrowing a rate from
+                # a different day or the legacy card.
+                if float(schedule.get(dt.isoformat()) or 0) <= 0:
+                    return False
+        if any(float(schedule.get(dt.isoformat()) or 0) > 0 for dt in service_window_dates(start, end)):
             return True
     if slot_rate_for_model(meta, model):
         return True
-    return bool(default_rate and default_rate > 0)
+    # A planning rate must originate in the mapped rate card.  Defaults are
+    # useful for analytical scoring only and must never make a slot bookable.
+    return False
 
 
 def preferred_candidate_for_slot(candidates: list[Candidate], preferred_model: str | None, objective: str) -> Candidate | None:
@@ -472,7 +484,7 @@ def iter_dates(start: date, end: date):
 
 
 def service_window_dates(start: date, end: date) -> list[date]:
-    """09:00-to-09:00 service windows represented by their starting date."""
+    """Service dates in a 09:00-to-09:00 half-open interval [start, end)."""
     if end <= start:
         return [start]
     return [start + timedelta(days=offset) for offset in range((end - start).days)]
@@ -540,7 +552,7 @@ def _repair_daily_continuity(
                 if proposed_from < phase.from_date or proposed_to > phase.to_date:
                     continue
                 proposed_service_dates = service_window_dates(proposed_from, proposed_to)
-                proposed_dates = list(iter_dates(proposed_from, proposed_to))
+                proposed_dates = service_window_dates(proposed_from, proposed_to)
                 proposed_daily_views = _distributed_daily_views(
                     int(row.views or 0),
                     len(proposed_dates),
@@ -589,10 +601,18 @@ def _repair_daily_continuity(
 
 
 def _date_exposure_weights(start: date, end: date) -> list[float]:
-    dates = list(iter_dates(start, end))
-    if len(dates) <= 1:
-        return [1.0] if dates else []
-    return [15 / 24, *([1.0] * max(len(dates) - 2, 0)), 9 / 24]
+    # Inputs are calendar dates, so each selected date is a full calendar day.
+    return [1.0 for _ in service_window_dates(start, end)]
+
+
+def _cpd_day_weights(start: date, end: date) -> list[float]:
+    """One fixed CPD charge for every selected calendar date.
+
+    CPD inventory can start at 09:00 on the first day and end at 21:00 on the
+    last day, but its rate is not hourly or prorated.  Each included date must
+    therefore retain weight 1.0.
+    """
+    return [1.0 for _ in service_window_dates(start, end)]
 
 
 def _distributed_daily_views(total_views: int, day_count: int, weights: list[float] | None = None) -> list[int]:
@@ -621,7 +641,7 @@ def _cpm_row_pricing(
     if gross_fallback <= 0:
         return 0.0, 0.0, 0.0, 0.0
     rate_schedule = meta.get("cpm_rate_schedule") or meta.get("rate_schedule") or {}
-    days = list(iter_dates(start, end))
+    days = service_window_dates(start, end)
     daily_views = _distributed_daily_views(planned_views, len(days), _date_exposure_weights(start, end))
     gross_total = 0.0
     net_total = 0.0
@@ -652,7 +672,7 @@ def _cpd_daily_rates(
     if gross_fallback <= 0 and not schedule:
         return []
     rates = []
-    for dt in iter_dates(start, end):
+    for dt in service_window_dates(start, end):
         gross_rate = float(schedule.get(dt.isoformat()) or gross_fallback)
         rates.append((dt, gross_rate, gross_rate))
     return rates
@@ -687,7 +707,7 @@ def split_rows_at_rate_changes(
             split_rows.append(row)
             continue
 
-        dates = list(iter_dates(row.from_date, row.to_date))
+        dates = service_window_dates(row.from_date, row.to_date)
         fallback_rate = (
             float(meta.get("cpd_rate") or row.rate or 0)
             if buy_type == "CPD"
@@ -705,7 +725,7 @@ def split_rows_at_rate_changes(
                 groups.append((group_start, index, daily_rates[group_start]))
                 group_start = index
 
-        weights = _date_exposure_weights(row.from_date, row.to_date)
+        weights = _cpd_day_weights(row.from_date, row.to_date) if buy_type == "CPD" else _date_exposure_weights(row.from_date, row.to_date)
         daily_views = _distributed_daily_views(int(row.views or 0), len(dates), weights)
         generated: list[EditablePlanLine] = []
         for group_index, (start_index, end_index, gross_rate) in enumerate(groups):
@@ -714,7 +734,7 @@ def split_rows_at_rate_changes(
                 segment.id = next_id
                 next_id += 1
             segment.from_date = dates[start_index]
-            segment.to_date = dates[end_index - 1]
+            segment.to_date = dates[end_index - 1] + timedelta(days=1)
             segment.days = campaign_duration_days(segment.from_date, segment.to_date)
             segment.views = sum(daily_views[start_index:end_index]) if row.views is not None else None
             segment.rate = round(discounted_rate(gross_rate, discount_pct), 4)
@@ -1415,11 +1435,6 @@ def _coerce_rows(req: MediaPlanRequest) -> list[EditablePlanLine]:
     return coerced
 
 
-def _per_country_min_lines(req: MediaPlanRequest) -> int:
-    # Budget is entered in USD.
-    return 6 if req.budget <= 10000 else 10
-
-
 def _inventory_by_slot_phase(req: MediaPlanRequest, inventory_rows: list[dict]) -> dict[tuple[str, str, str], int]:
     inventory_by_slot_phase: dict[tuple[str, str, str], int] = defaultdict(int)
     for row in inventory_rows:
@@ -1428,7 +1443,7 @@ def _inventory_by_slot_phase(req: MediaPlanRequest, inventory_rows: list[dict]) 
         slot = row["slot_code"]
         available = max(int(row.get("available_views") or 0), 0)
         for phase in default_phases(req):
-            if phase.from_date <= dt <= phase.to_date:
+            if phase.from_date <= dt < phase.to_date or (phase.from_date == phase.to_date == dt):
                 inventory_by_slot_phase[(country, slot, phase.name)] += available
     return inventory_by_slot_phase
 
@@ -1463,7 +1478,7 @@ def _phase_category_zone_used(rows: list[EditablePlanLine], country: str, phase_
 
 
 def _slot_window(phase: Phase, phase_rows: list[EditablePlanLine], pricing_model: str, sequence: int) -> tuple[date, date, int]:
-    total_days = inclusive_days(phase.from_date, phase.to_date)
+    total_days = campaign_duration_days(phase.from_date, phase.to_date)
     if total_days <= 2:
         return phase.from_date, phase.to_date, total_days
 
@@ -1477,11 +1492,11 @@ def _slot_window(phase: Phase, phase_rows: list[EditablePlanLine], pricing_model
     step = max(1, total_days // max(len(phase_rows) + 2, 2))
     start_offset = min(sequence * step, max(total_days - window_days, 0))
     start = phase.from_date.fromordinal(phase.from_date.toordinal() + start_offset)
-    end = start.fromordinal(start.toordinal() + window_days - 1)
+    end = start.fromordinal(start.toordinal() + window_days)
 
     if end > phase.to_date:
         end = phase.to_date
-        start = end.fromordinal(end.toordinal() - window_days + 1)
+        start = end.fromordinal(end.toordinal() - window_days)
 
     if occupied:
         candidate_offsets = list(range(0, max(total_days - window_days, 0) + 1))
@@ -1489,10 +1504,10 @@ def _slot_window(phase: Phase, phase_rows: list[EditablePlanLine], pricing_model
         best_overlap = None
         for offset in candidate_offsets:
             cand_start = phase.from_date.fromordinal(phase.from_date.toordinal() + offset)
-            cand_end = cand_start.fromordinal(cand_start.toordinal() + window_days - 1)
+            cand_end = cand_start.fromordinal(cand_start.toordinal() + window_days)
             overlap = 0
             for occ_start, occ_end in occupied:
-                overlap += max(0, min(cand_end, occ_end).toordinal() - max(cand_start, occ_start).toordinal() + 1)
+                overlap += max(0, min(cand_end, occ_end).toordinal() - max(cand_start, occ_start).toordinal())
             if best_overlap is None or overlap < best_overlap:
                 best_overlap = overlap
                 best_pair = (cand_start, cand_end)
@@ -1500,11 +1515,11 @@ def _slot_window(phase: Phase, phase_rows: list[EditablePlanLine], pricing_model
                     break
         start, end = best_pair
 
-    return start, end, inclusive_days(start, end)
+    return start, end, campaign_duration_days(start, end)
 
 
 def _windows_overlap(start_a: date, end_a: date, start_b: date, end_b: date) -> bool:
-    return max(start_a, start_b) <= min(end_a, end_b)
+    return max(start_a, start_b) < min(end_a, end_b)
 
 
 def _find_non_overlapping_slot_window(
@@ -1513,7 +1528,7 @@ def _find_non_overlapping_slot_window(
     blocked_ranges: list[tuple[date, date]],
     preferred_start: date,
 ) -> tuple[date, date, int] | None:
-    total_days = inclusive_days(phase.from_date, phase.to_date)
+    total_days = campaign_duration_days(phase.from_date, phase.to_date)
     if total_days <= 0:
         return None
 
@@ -1526,7 +1541,7 @@ def _find_non_overlapping_slot_window(
             if offset > latest_start_offset:
                 continue
             cand_start = phase.from_date.fromordinal(phase.from_date.toordinal() + offset)
-            cand_end = cand_start.fromordinal(cand_start.toordinal() + window_days - 1)
+            cand_end = cand_start.fromordinal(cand_start.toordinal() + window_days)
             if any(_windows_overlap(cand_start, cand_end, blocked_start, blocked_end) for blocked_start, blocked_end in blocked_ranges):
                 continue
             return cand_start, cand_end, window_days
@@ -1968,8 +1983,8 @@ def plan_media(
                 if gross_amount <= 0 and net_amount <= 0:
                     return reject("CPM pricing produced a zero amount for the selected date window.")
         else:
-            cpd_days = list(iter_dates(row_from, row_to))
-            cpd_weights = _date_exposure_weights(row_from, row_to)
+            cpd_days = service_window_dates(row_from, row_to)
+            cpd_weights = _cpd_day_weights(row_from, row_to)
             scheduled_daily_rates = [
                 float((meta.get("cpd_rate_schedule") or {}).get(day.isoformat()) or gross_rate)
                 for day in cpd_days
@@ -1999,7 +2014,7 @@ def plan_media(
                     minimum_cost = discounted_rate(scheduled_daily_rates[0], req.discount_pct) * cpd_weights[0] if scheduled_daily_rates else 0
                     return reject(f"The available allocation for phase '{phase.name}' is below the first CPD segment cost of USD {minimum_cost:,.2f}.")
             planned_views = min(available, int(candidate.views / max(candidate.active_days, 1) * exposure_days)) or None
-            row_to = row_from.fromordinal(row_from.toordinal() + max_days - 1)
+            row_to = row_from.fromordinal(row_from.toordinal() + max_days)
             days = campaign_duration_days(row_from, row_to)
             gross_rate_avg = round(gross_amount / max(exposure_days, 0.0001), 4) if not is_foc else gross_rate
             net_rate_avg = round(net_amount / max(exposure_days, 0.0001), 4) if not is_foc else rate
@@ -2051,8 +2066,8 @@ def plan_media(
                 if planned_views < settings.min_slot_views or spent_total + net_amount > req.budget + 1e-9 or spent_by_slot[slot_key_value] + net_amount > slot_budget_cap + 1e-9:
                     return reject(f"The slot could not fit within the remaining USD {allocation_remaining:,.2f} allowed by the campaign and 35% slot cap.")
             else:
-                cpd_days = list(iter_dates(row_from, row_to))
-                cpd_weights = _date_exposure_weights(row_from, row_to)
+                cpd_days = service_window_dates(row_from, row_to)
+                cpd_weights = _cpd_day_weights(row_from, row_to)
                 gross_amount = 0.0
                 net_amount = 0.0
                 fitted_days = 0
@@ -2069,7 +2084,7 @@ def plan_media(
                     exposure_days += exposure_weight
                 if fitted_days <= 0:
                     return reject(f"The remaining USD {allocation_remaining:,.2f} within the campaign and per-slot cap cannot buy the first CPD flight segment.")
-                row_to = row_from.fromordinal(row_from.toordinal() + fitted_days - 1)
+                row_to = row_from.fromordinal(row_from.toordinal() + fitted_days)
                 days = campaign_duration_days(row_from, row_to)
                 planned_views = min(available, int(candidate.views / max(candidate.active_days, 1) * exposure_days)) or None
                 gross_amount = round(gross_amount, 2)
@@ -2282,7 +2297,20 @@ def plan_media(
                                 campaign_generated_slot_keys,
                                 manual_slot_keys,
                             )
-                            base_goal = _per_country_min_lines(req) * brand_share * phase_share * marketplace_share * comcat_share
+                            # The 6/10 portfolio guidance is campaign-wide,
+                            # then proportionally shared across countries. It
+                            # shapes allocation capacity but never triggers a
+                            # country-level top-up or mandatory slot count.
+                            campaign_guidance = 6 if req.budget <= 10_000 else 10
+                            country_share = country_budget / max(req.budget, 1)
+                            base_goal = (
+                                campaign_guidance
+                                * country_share
+                                * brand_share
+                                * phase_share
+                                * marketplace_share
+                                * comcat_share
+                            )
                             phase_goal = max(1, min(settings.max_lines_per_phase, round(base_goal)))
                             used_in_phase = len([
                                 row
@@ -2297,50 +2325,10 @@ def plan_media(
                             for candidate in ranked:
                                 if used_in_phase >= phase_goal:
                                     break
-                                target_budget = remaining_target / max(phase_goal - used_in_phase, 1) if remaining_target > 0 else country_budget * brand_share * marketplace_share * comcat_share / max(_per_country_min_lines(req), 1)
+                                target_budget = remaining_target / max(phase_goal - used_in_phase, 1) if remaining_target > 0 else country_budget * brand_share * marketplace_share * comcat_share
                                 if append_row(candidate, phase, stype, getattr(candidate, score_name), target_budget, brand_name=brand_name):
                                     used_in_phase += 1
                                     remaining_target = max(remaining_target - target_budget, 0)
-
-    per_country_min = _per_country_min_lines(req)
-    for country in countries:
-        have = len([r for r in rows if r.country == country and (r.slot_code or "").strip()])
-        if have >= per_country_min:
-            continue
-        country_candidates = [c for c in candidates if c.country == country]
-        if selected_slot_keys:
-            preferred = [
-                candidate
-                for key in selected_slot_keys
-                if key.startswith(f"{country}|")
-                for candidate in [selected_candidate_for_key(key)]
-                if candidate
-            ]
-            country_candidates = preferred or [
-                candidate
-                for candidate in country_candidates
-                if slot_key(candidate.country, candidate.slot_code) in selected_slot_keys
-                and (
-                    slot_key(candidate.country, candidate.slot_code) not in selected_slot_pricing_map
-                    or candidate.pricing_model == selected_slot_pricing_map[slot_key(candidate.country, candidate.slot_code)]
-                )
-            ]
-        ranked = _campaign_diverse_order(
-            _objective_diverse_order(country_candidates, req.objective),
-            campaign_generated_slot_keys,
-            manual_slot_keys,
-        )
-        for idx, candidate in enumerate(ranked):
-            if have >= per_country_min or spent_total >= req.budget:
-                break
-            phase = phases[idx % len(phases)]
-            brand_name, brand_share = brand_splits[idx % len(brand_splits)]
-            target_budget = (max(req.budget - spent_total, 0) / max(per_country_min - have, 1)) * max(brand_share, 0.01)
-            chosen_type = _allocation_type(req.objective)
-            chosen_score = _candidate_score(candidate, req.objective)
-            key = slot_key(candidate.country, candidate.slot_code)
-            if append_row(candidate, phase, chosen_type, chosen_score, target_budget, force=key in selected_slot_keys, brand_name=brand_name):
-                have += 1
 
     existing_selected_keys = {
         selected_key
@@ -2369,6 +2357,9 @@ def plan_media(
     # material budget remainder merely because the initial line quotas were met.
     topup_added = 0.0
     topup_iterations = 0
+    # Preserve the established overall campaign-utilisation margin.  This is
+    # applied only after split targets have been calculated; it is not a margin
+    # within any marketplace, comcat, phase, brand, or objective split.
     continuity_budget_margin = round(min(req.budget * 0.05, 250.0), 2)
     utilization_target_spend = round(max(req.budget - continuity_budget_margin, 0), 2)
     while spent_total < utilization_target_spend and topup_iterations < 500:
@@ -2543,7 +2534,9 @@ def plan_media(
         if recorded_failures:
             reason = " ".join(recorded_failures[-3:])
         elif not candidate:
-            if selected_key.lower() in manual_slot_keys:
+            if meta and not slot_has_rate_for_model(meta, requested_model):
+                reason = f"No official {requested_model} rate is available for this slot during the selected flight."
+            elif selected_key.lower() in manual_slot_keys:
                 reason = "The manually selected slot or requested buy type was not found in the slot/rate catalog."
             else:
                 reason = "The slot did not pass backend eligibility, category relevance, pricing, or campaign-objective checks."
@@ -2663,6 +2656,7 @@ def plan_media(
         return {key: round((value / on_deck_total) * 100, 2) for key, value in values.items()}
 
     actual_marketplace_spend: dict[str, float] = defaultdict(float)
+    actual_brand_spend: dict[str, float] = defaultdict(float)
     actual_phase_spend: dict[str, float] = defaultdict(float)
     actual_country_spend: dict[str, float] = defaultdict(float)
     actual_comcat_spend: dict[str, float] = defaultdict(float)
@@ -2670,6 +2664,7 @@ def plan_media(
     for row in on_deck_rows:
         row_spend = float(row.cost or row.net_amount or 0)
         actual_marketplace_spend[row.marketplace or "unknown"] += row_spend
+        actual_brand_spend[row.brand or "unknown"] += row_spend
         actual_phase_spend[row.phase or "unknown"] += row_spend
         actual_country_spend[row.country or "unknown"] += row_spend
         actual_objective_spend[row.stype or "unknown"] += row_spend
@@ -2683,6 +2678,38 @@ def plan_media(
             actual_comcat_spend[comcat_name] += row_spend
         else:
             actual_comcat_spend["unmapped"] += row_spend
+
+    def split_constraint_reason(dimension: str, name: str) -> str:
+        if dimension == "marketplace":
+            matching = [candidate for candidate in candidates if candidate.marketplace == name]
+        elif dimension == "comcat":
+            matching = [candidate for candidate in candidates if _slot_relevance_for_comcat(candidate, name) > 0]
+        elif dimension == "phase":
+            phase = next((item for item in phases if item.name == name), None)
+            matching = [
+                candidate for candidate in candidates
+                if phase and inventory_by_slot_phase.get((candidate.country, candidate.slot_code, phase.name), 0) > 0
+            ]
+        else:
+            matching = candidates
+        if not matching:
+            return f"No eligible {dimension} inventory was available for '{name}' after country, date, marketplace, booking, and category filters."
+        return (
+            f"The eligible {dimension} inventory for '{name}' could not absorb its requested share "
+            "after rate-card availability, CPD daily minimums, CPM minimum view blocks, selected slots, and the 35% per-slot budget cap were applied."
+        )
+
+    split_constraint_reasons = {
+        f"{dimension}:{name}": split_constraint_reason(dimension, name)
+        for dimension, requested in (
+            ("brand", {name: share for name, share in brand_splits if name}),
+            ("marketplace", dict(marketplace_splits)),
+            ("comcat", dict(comcat_splits)),
+            ("phase", phase_splits),
+            ("objective", {stype: share for stype, share, _score_name in _allocation_tracks(req)}),
+        )
+        for name in requested
+    }
 
     diagnostics = {
         "candidate_count": len(candidates),
@@ -2702,7 +2729,6 @@ def plan_media(
         "continuity_budget_margin_usd": continuity_budget_margin,
         "maximum_slot_budget_share_pct": round(MAX_SLOT_BUDGET_SHARE * 100, 2),
         "homepage_cpd_minimum_budget_usd": MIN_CPD_BUDGET_USD,
-        "per_country_min": per_country_min,
         "countries": countries,
         "marketplace": req.marketplace,
         "brand_budget_split": {name: round(share * 100, 2) for name, share in brand_splits if name},
@@ -2711,12 +2737,14 @@ def plan_media(
         "phase_budget_split": {name: round(share * 100, 2) for name, share in phase_splits.items()},
         "objective_budget_split": {stype: round(share * 100, 2) for stype, share, _score_name in _allocation_tracks(req)},
         "actual_country_budget_split": actual_pct_split(dict(actual_country_spend)),
+        "actual_brand_budget_split": actual_pct_split(dict(actual_brand_spend)),
         "actual_marketplace_budget_split": actual_pct_split(dict(actual_marketplace_spend)),
         "actual_comcat_budget_split": actual_pct_split(dict(actual_comcat_spend)),
         "actual_phase_budget_split": actual_pct_split(dict(actual_phase_spend)),
         "actual_objective_budget_split": actual_pct_split(dict(actual_objective_spend)),
         "country_row_counts": {country: len([row for row in rows if row.country == country and (row.slot_code or "").strip()]) for country in countries},
         "omitted_selected_slots": omitted_selected_slots,
+        "split_constraint_reasons": split_constraint_reasons,
         **continuity_diagnostics,
     }
 

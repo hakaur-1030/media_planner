@@ -55,6 +55,7 @@ def support_error_response(
     contact: str,
     reference: str,
     technical_detail: str = "",
+    endpoint: str = "",
 ) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
@@ -65,6 +66,7 @@ def support_error_response(
                 "contact": contact,
                 "reference": reference,
                 "technical_detail": technical_detail[:2000],
+                "endpoint": endpoint,
             }
         },
     )
@@ -84,6 +86,7 @@ def request_validation_exception_handler(request: Request, exc: RequestValidatio
             f"{'.'.join(str(part) for part in error.get('loc', []))}: {error.get('msg', 'invalid value')}"
             for error in exc.errors()
         ),
+        f"{request.method} {request.url.path}",
     )
 
 
@@ -104,6 +107,7 @@ def unhandled_exception_handler(request: Request, exc: Exception):
             "Data/BI POC",
             reference,
             f"{type(exc).__name__}: {str(exc) or 'No additional detail'}",
+            f"{request.method} {request.url.path}",
         )
     return support_error_response(
         500,
@@ -112,6 +116,7 @@ def unhandled_exception_handler(request: Request, exc: Exception):
         "Engineering POC",
         reference,
         f"{type(exc).__name__}: {str(exc) or 'No additional detail'}",
+        f"{request.method} {request.url.path}",
     )
 
 
@@ -135,11 +140,13 @@ def plan_failure_message(diagnostics: dict, fallback: str = "No plan rows genera
     return diagnostics.get("reason") or fallback
 
 
-def budget_split_deviations(diagnostics: dict, reporting_threshold_pct: float = 0.1) -> list[str]:
+def budget_split_deviations(diagnostics: dict, reporting_threshold_pct: float = 10.0) -> list[str]:
     violations = []
     dimensions = (
+        ("brand", diagnostics.get("brand_budget_split") or {}, diagnostics.get("actual_brand_budget_split") or {}),
         ("phase", diagnostics.get("phase_budget_split") or {}, diagnostics.get("actual_phase_budget_split") or {}),
         ("marketplace", diagnostics.get("marketplace_budget_split") or {}, diagnostics.get("actual_marketplace_budget_split") or {}),
+        ("comcat", diagnostics.get("comcat_budget_split") or {}, diagnostics.get("actual_comcat_budget_split") or {}),
         ("objective", diagnostics.get("objective_budget_split") or {}, diagnostics.get("actual_objective_budget_split") or {}),
     )
     for dimension, requested, actual in dimensions:
@@ -149,6 +156,72 @@ def budget_split_deviations(diagnostics: dict, reporting_threshold_pct: float = 
             if abs(actual_value - target_value) > reporting_threshold_pct:
                 violations.append(f"{dimension} '{name}' requested {target_value:.1f}% but received {actual_value:.1f}%")
     return violations
+
+
+def split_deviation_notices(diagnostics: dict, reporting_threshold_pct: float = 10.0) -> list[dict]:
+    notices = []
+    dimensions = (
+        ("brand", diagnostics.get("brand_budget_split") or {}, diagnostics.get("actual_brand_budget_split") or {}),
+        ("phase", diagnostics.get("phase_budget_split") or {}, diagnostics.get("actual_phase_budget_split") or {}),
+        ("marketplace", diagnostics.get("marketplace_budget_split") or {}, diagnostics.get("actual_marketplace_budget_split") or {}),
+        ("comcat", diagnostics.get("comcat_budget_split") or {}, diagnostics.get("actual_comcat_budget_split") or {}),
+        ("objective", diagnostics.get("objective_budget_split") or {}, diagnostics.get("actual_objective_budget_split") or {}),
+    )
+    reasons = diagnostics.get("split_constraint_reasons") or {}
+    for dimension, requested, actual in dimensions:
+        for name, target in requested.items():
+            actual_value = float(actual.get(name, 0) or 0)
+            target_value = float(target or 0)
+            deviation = round(abs(actual_value - target_value), 2)
+            if deviation > reporting_threshold_pct:
+                notices.append({
+                    "dimension": dimension,
+                    "name": name,
+                    "requested_pct": target_value,
+                    "actual_pct": actual_value,
+                    "deviation_pct": deviation,
+                    "reason": reasons.get(f"{dimension}:{name}") or "Eligible inventory could not meet this split after applying date, rate-card, booking, minimum-buy, and per-slot budget constraints.",
+                })
+    return notices
+
+
+def annotate_split_diagnostics(diagnostics: dict) -> None:
+    diagnostics["budget_split_deviations"] = budget_split_deviations(diagnostics)
+    diagnostics["split_deviation_notices"] = split_deviation_notices(diagnostics)
+    diagnostics["budget_split_status"] = "closest_feasible" if diagnostics["budget_split_deviations"] else "matched"
+
+
+def require_split_tolerance(diagnostics: dict) -> None:
+    """Do not present a plan that breaches the agreed 10-point split limit."""
+    annotate_split_diagnostics(diagnostics)
+    if diagnostics["split_deviation_notices"]:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "The requested budget splits are not feasible within the allowed 10 percentage-point deviation.",
+                "diagnostics": diagnostics,
+            },
+        )
+
+
+def validate_planning_request(req: MediaPlanRequest, *, allow_past_dates: bool = False) -> None:
+    if req.end_date < req.start_date:
+        raise HTTPException(status_code=400, detail="end_date must be on or after start_date")
+    if not allow_past_dates and req.start_date < date.today():
+        raise HTTPException(status_code=400, detail="start_date must be today or later")
+    if req.budget <= 0:
+        raise HTTPException(status_code=400, detail="on-deck budget must be positive")
+    if not req.comcats:
+        raise HTTPException(status_code=400, detail="select at least one comcat")
+    if not req.countries:
+        raise HTTPException(status_code=400, detail="select at least one country")
+    if any(country.lower() not in {"ae", "sa", "eg"} for country in req.countries):
+        raise HTTPException(status_code=400, detail="countries must be selected from ae, sa, eg")
+
+
+def recommendation_starting_count(req: MediaPlanRequest) -> int:
+    """Campaign-wide starting guidance; preview quality determines the final count."""
+    return 6 if float(req.budget or 0) <= 10_000 else 10
 
 
 @lru_cache(maxsize=1)
@@ -215,6 +288,7 @@ def build_response(req: MediaPlanRequest, rows, diagnostics, repo, plan_id=None)
         "on_deck_budget": req.budget,
         "offdeck_budget": req.offdeck_budget,
         "discount_pct": req.discount_pct,
+        "currency": req.currency,
         "allocated": allocated,
         "on_deck_allocated": on_deck_allocated,
         "offdeck_allocated": offdeck_allocated,
@@ -391,11 +465,13 @@ def search_brand_codes(q: str = "", limit: int = 30):
 
 @app.post("/api/slot-preselection")
 def slot_preselection(req: MediaPlanRequest, settings: Settings = Depends(get_settings), repo: BigQueryRepository = Depends(get_repo)):
+    # Saved plans may be reopened to inspect their original preselection.
+    # Creating a new plan still rejects a flight that starts in the past.
+    validate_planning_request(req, allow_past_dates=True)
     req.brand_tag = req.brand_tag or repo.infer_brand_tag(req)
     historical_rows = repo.fetch_historical_performance(req)
     inventory_rows = repo.fetch_inventory(req)
     slot_meta = repo.fetch_slot_meta(req)
-    minimum_slot_count = max(len(req.countries), 1) * (6 if req.budget <= 10000 else 10)
     suggestion_pool = suggest_slots(req, historical_rows, inventory_rows, slot_meta, settings, limit=None)
     available_slots = build_available_slots(req, inventory_rows, slot_meta)
     manual_inventory_rows = repo.fetch_inventory(req, enforce_eligibility=False)
@@ -404,8 +480,13 @@ def slot_preselection(req: MediaPlanRequest, settings: Settings = Depends(get_se
     offdeck_slots = repo.fetch_offdeck_slots(req, enforce_eligibility=False)
     preview_rows = []
     preview_diagnostics = {}
-    suggestion_count = min(minimum_slot_count, len(suggestion_pool))
-    suggestions = suggestion_pool[:suggestion_count]
+    starting_count = min(recommendation_starting_count(req), len(suggestion_pool))
+    batch_size = max(len(req.countries), 1) * 2
+    next_candidate_index = starting_count
+    suggestions = suggestion_pool[:starting_count]
+    previous_utilization = -1.0
+    preview_attempts = 0
+    max_preview_attempts = 4
     while suggestions:
         preview_req = req.model_copy(deep=True)
         preview_req.selected_slot_keys = [slot["slot_key"] for slot in suggestions]
@@ -414,14 +495,43 @@ def slot_preselection(req: MediaPlanRequest, settings: Settings = Depends(get_se
             slot["slot_key"]: slot.get("pricing_model") or "CPM"
             for slot in suggestions
         }
-        preview_rows, preview_diagnostics = plan_media(preview_req, historical_rows, inventory_rows, slot_meta, settings)
+        # Preview is non-critical. A constrained/partial inventory must still
+        # let an operator open preselection and manually choose a placement.
+        try:
+            preview_attempts += 1
+            preview_rows, preview_diagnostics = plan_media(preview_req, historical_rows, inventory_rows, slot_meta, settings)
+        except Exception as exc:
+            logger.warning("Slot preselection preview failed; returning recommendations: %s", exc)
+            preview_diagnostics = {"preview_status": "unavailable"}
+            break
+
+        utilization = float(preview_diagnostics.get("budget_utilization_pct") or 0.0)
+        # Remove a starting or added candidate when the optimizer cannot give
+        # it a viable allocation.  The 6/10 starting point is therefore not a
+        # minimum either: the final list contains only actionable placements.
+        preview_spend_by_slot: dict[str, float] = {}
+        for row in preview_rows:
+            key = f"{row.country}|{row.slot_code}"
+            preview_spend_by_slot[key] = preview_spend_by_slot.get(key, 0.0) + float(row.cost or 0)
+        suggestions = [
+            slot for slot in suggestions
+            if preview_spend_by_slot.get(slot["slot_key"], 0.0) > 0
+        ]
+
         if (
-            float(preview_diagnostics.get("budget_utilization_pct") or 0) >= 95.0
-            or len(suggestions) >= len(suggestion_pool)
+            utilization >= 95.0
+            or next_candidate_index >= len(suggestion_pool)
+            or preview_attempts >= max_preview_attempts
         ):
             break
-        suggestion_count = min(len(suggestions) + max(len(req.countries), 1), len(suggestion_pool))
-        suggestions = suggestion_pool[:suggestion_count]
+        # The starting count is guidance, not a ceiling.  Add more candidates
+        # only while they create a meaningful improvement in spendability;
+        # otherwise they merely dilute the recommendation list.
+        if previous_utilization >= 0 and utilization - previous_utilization < 0.25:
+            break
+        previous_utilization = utilization
+        suggestions.extend(suggestion_pool[next_candidate_index:next_candidate_index + batch_size])
+        next_candidate_index += batch_size
     preview_spend_by_slot: dict[str, float] = {}
     for row in preview_rows:
         key = f"{row.country}|{row.slot_code}"
@@ -446,25 +556,18 @@ def slot_preselection(req: MediaPlanRequest, settings: Settings = Depends(get_se
             "brand_tag": req.brand_tag,
             "recommended_slot_count": len(suggestions),
             "eligible_suggestion_pool_count": len(suggestion_pool),
+            "recommendation_starting_count": starting_count,
+            "preview_status": preview_diagnostics.get("preview_status", "available"),
         },
     }
 
 
 @app.post("/api/media-plan", response_model=MediaPlanResponse)
 def create_media_plan(req: MediaPlanRequest, engine: str = "v1", settings: Settings = Depends(get_settings), repo: BigQueryRepository = Depends(get_repo)):
-    if req.end_date < req.start_date:
-        raise HTTPException(status_code=400, detail="end_date must be on or after start_date")
-    if req.start_date < date.today():
-        raise HTTPException(status_code=400, detail="start_date must be today or later")
-    if req.budget <= 0:
-        raise HTTPException(status_code=400, detail="on-deck budget must be positive")
+    validate_planning_request(req)
+    if str(engine).lower() == "v2":
+        raise HTTPException(status_code=400, detail="engine v2 is disabled because it does not yet enforce the Media Planner split, rate-card, and budget rules")
     req.total_budget = gross_budget_from_net(req.budget + req.offdeck_budget, req.discount_pct)
-    if not req.comcats:
-        raise HTTPException(status_code=400, detail="select at least one comcat")
-    if not req.countries:
-        raise HTTPException(status_code=400, detail="select at least one country")
-    if any(c.lower() not in {"ae", "sa", "eg"} for c in req.countries):
-        raise HTTPException(status_code=400, detail="countries must be selected from ae, sa, eg")
 
     req.brand_tag = req.brand_tag or repo.infer_brand_tag(req)
     historical_rows = repo.fetch_historical_performance(req)
@@ -484,8 +587,7 @@ def create_media_plan(req: MediaPlanRequest, engine: str = "v1", settings: Setti
     diagnostics.update({"selected_comcats": req.comcats, "selected_countries": req.countries, "brand_tag": req.brand_tag, "engine": "v1"})
     if not rows:
         raise HTTPException(status_code=422, detail={"message": plan_failure_message(diagnostics), "diagnostics": diagnostics})
-    diagnostics["budget_split_deviations"] = budget_split_deviations(diagnostics)
-    diagnostics["budget_split_status"] = "closest_feasible" if diagnostics["budget_split_deviations"] else "matched"
+    require_split_tolerance(diagnostics)
     diagnostics["roas_refine"] = {
         "applied": False,
         "reason": "skipped to preserve the requested budget, phase, marketplace, comcat, and selected-slot allocation",
@@ -495,8 +597,9 @@ def create_media_plan(req: MediaPlanRequest, engine: str = "v1", settings: Setti
 
 @app.post("/api/media-plan/{plan_id}/regenerate", response_model=MediaPlanResponse)
 def regenerate_media_plan(plan_id: str, req: MediaPlanRequest, engine: str = "v1", settings: Settings = Depends(get_settings), repo: BigQueryRepository = Depends(get_repo)):
-    if req.budget <= 0:
-        raise HTTPException(status_code=400, detail="on-deck budget must be positive")
+    validate_planning_request(req, allow_past_dates=True)
+    if str(engine).lower() == "v2":
+        raise HTTPException(status_code=400, detail="engine v2 is disabled because it does not yet enforce the Media Planner split, rate-card, and budget rules")
     req.total_budget = gross_budget_from_net(req.budget + req.offdeck_budget, req.discount_pct)
     req.brand_tag = req.brand_tag or repo.infer_brand_tag(req)
     historical_rows = repo.fetch_historical_performance(req)
@@ -513,7 +616,7 @@ def regenerate_media_plan(plan_id: str, req: MediaPlanRequest, engine: str = "v1
         inventory_rows,
         slot_meta,
         settings,
-        limit=max(len(req.countries), 1) * (6 if req.budget <= 10000 else 10),
+        limit=recommendation_starting_count(req),
     )
     refresh_regeneration_selection(req, replacement_suggestions)
     inventory_rows, slot_meta = merge_manual_slot_inputs(req, repo, inventory_rows, slot_meta)
@@ -532,8 +635,7 @@ def regenerate_media_plan(plan_id: str, req: MediaPlanRequest, engine: str = "v1
     diagnostics.update({"selected_comcats": req.comcats, "selected_countries": req.countries, "brand_tag": req.brand_tag, "engine": "v1", "regenerated": True, "regenerated_from": plan_id})
     if not rows:
         raise HTTPException(status_code=422, detail={"message": plan_failure_message(diagnostics), "diagnostics": diagnostics})
-    diagnostics["budget_split_deviations"] = budget_split_deviations(diagnostics)
-    diagnostics["budget_split_status"] = "closest_feasible" if diagnostics["budget_split_deviations"] else "matched"
+    require_split_tolerance(diagnostics)
     return build_response(req, rows, diagnostics, repo)
 
 

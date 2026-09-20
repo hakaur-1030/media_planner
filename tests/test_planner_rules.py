@@ -8,6 +8,7 @@ from planner import (
     MAX_SLOT_BUDGET_SHARE,
     MIN_CPD_BUDGET_USD,
     _date_exposure_weights,
+    _cpd_day_weights,
     _campaign_diverse_order,
     _objective_diverse_order,
     marketplace_from_slot,
@@ -101,7 +102,7 @@ class PlannerRulesTest(unittest.TestCase):
 
         self.assertEqual(len(split), 2)
         self.assertEqual([(item.from_date, item.to_date, item.gross_cpm) for item in split], [
-            (date(2026, 10, 1), date(2026, 10, 1), 10),
+            (date(2026, 10, 1), date(2026, 10, 2), 10),
             (date(2026, 10, 2), date(2026, 10, 3), 15),
         ])
         self.assertEqual(sum(item.views or 0 for item in split), 4_000)
@@ -110,10 +111,10 @@ class PlannerRulesTest(unittest.TestCase):
 
     def test_rate_change_splits_a_cpd_plan_line_without_changing_totals(self):
         row = EditablePlanLine.model_validate({
-            "id": 8, "from": date(2026, 10, 1), "to": date(2026, 10, 2),
+            "id": 8, "from": date(2026, 10, 1), "to": date(2026, 10, 3),
             "country": "ae", "page": "Home", "asset": "Home hero", "slot_name": "Home hero",
-            "days": 1, "buyType": "CPD", "rate": 200, "views": 1_000,
-            "cost": 137.5, "gross_amount": 137.5, "net_amount": 137.5,
+            "days": 2, "buyType": "CPD", "rate": 200, "views": 1_000,
+            "cost": 300, "gross_amount": 300, "net_amount": 300,
             "phase": "Launch", "brand": "Test", "stype": "reach", "slot_code": "home_hero",
         })
         meta = {
@@ -126,11 +127,11 @@ class PlannerRulesTest(unittest.TestCase):
         split = split_rows_at_rate_changes([row], meta, discount_pct=0)
 
         self.assertEqual([(item.from_date, item.to_date, item.rate) for item in split], [
-            (date(2026, 10, 1), date(2026, 10, 1), 100),
-            (date(2026, 10, 2), date(2026, 10, 2), 200),
+            (date(2026, 10, 1), date(2026, 10, 2), 100),
+            (date(2026, 10, 2), date(2026, 10, 3), 200),
         ])
-        self.assertEqual(sum(item.cost for item in split), 137.5)
-        self.assertEqual(sum(item.gross_amount for item in split), 137.5)
+        self.assertEqual(sum(item.cost for item in split), 300)
+        self.assertEqual(sum(item.gross_amount for item in split), 300)
 
     def test_supermall_slot_code_overrides_legacy_core_metadata(self):
         self.assertEqual(marketplace_from_slot("supermall_ae_sfu_1", "SFU 1", "core"), "supermall")
@@ -190,15 +191,44 @@ class PlannerRulesTest(unittest.TestCase):
         self.assertEqual(supermall[0]["slot_code"], "supermall_ae_mobile_clp")
         self.assertEqual(supermall[0]["confidence_score"], 0.25)
 
-    def test_nine_am_flight_counts_one_day_and_keeps_end_date_views(self):
+    def test_nine_am_flight_uses_half_open_service_days(self):
         start = date(2026, 8, 21)
         end = date(2026, 8, 22)
         self.assertEqual(campaign_duration_days(start, end), 1)
         self.assertEqual(service_window_dates(start, end), [start])
         weights = _date_exposure_weights(start, end)
-        self.assertEqual(weights, [15 / 24, 9 / 24])
+        self.assertEqual(weights, [1.0])
         self.assertEqual(sum(weights), 1.0)
-        self.assertGreater(weights[-1], 0)
+        self.assertEqual(_cpd_day_weights(start, end), [1.0])
+
+    def test_phases_may_touch_at_the_same_nine_am_boundary_but_not_overlap(self):
+        start = date(2026, 8, 21)
+        end = date(2026, 8, 31)
+        request = MediaPlanRequest.model_validate({
+            "brand": "Test", "comcats": ["Mobiles"], "countries": ["ae"],
+            "start_date": start, "end_date": end, "budget": 5_000,
+            "currency": "USD", "objective": "reach",
+            "phases": [
+                {"name": "Launch", "from": start, "to": date(2026, 8, 26)},
+                {"name": "Sustain", "from": date(2026, 8, 26), "to": end},
+            ],
+        })
+        self.assertEqual(len(request.phases), 2)
+
+        with self.assertRaises(ValueError):
+            MediaPlanRequest.model_validate({
+                **request.model_dump(by_alias=True),
+                "phases": [{"name": "Empty", "from": start, "to": start}],
+            })
+
+        with self.assertRaises(ValueError):
+            MediaPlanRequest.model_validate({
+                **request.model_dump(by_alias=True),
+                "phases": [
+                    {"name": "Launch", "from": start, "to": date(2026, 8, 27)},
+                    {"name": "Sustain", "from": date(2026, 8, 26), "to": end},
+                ],
+            })
 
     def test_continuity_extends_cpm_window_without_changing_spend(self):
         start = date(2026, 9, 21)

@@ -28,9 +28,9 @@ class Settings(BaseSettings):
         "noonbiadmon.admon_business_analytics.slot_rate_card_base",
         validation_alias="SLOT_RATE_CARD_TABLE",
     )
-    slot_rate_card_q4_table: str = Field(
-        "noonbiadmon.admon_business_analytics.rate_card_Q4_slotwise",
-        validation_alias="SLOT_RATE_CARD_Q4_TABLE",
+    slot_rate_card_q4_2026_table: str = Field(
+        "noonbiadmon.admon_business_analytics.rate_card_Q4",
+        validation_alias="SLOT_RATE_CARD_Q4_2026_TABLE",
     )
     offdeck_slots_table: str = Field(
         "noonbiadmon.admon_business_analytics.offdeck_slots",

@@ -174,7 +174,7 @@ def get_first(row: dict, *names: str):
 
 
 def infer_country(row: dict) -> str:
-    explicit = norm(get_first(row, "country"))
+    explicit = norm(get_first(row, "country", "country_code", "country code", "market", "market_code", "market code", "country_name", "country name"))
     if explicit:
         if explicit in {"uae", "united arab emirates"}:
             return "ae"
@@ -196,6 +196,25 @@ def infer_country(row: dict) -> str:
 
 def slot_code_key(value) -> str:
     return norm(value)
+
+
+def rate_card_slot_keys(value, country: str = "") -> tuple[str, ...]:
+    """Return exact and country-prefix-free keys for rate-card joins.
+
+    Some rate cards include the market in the placement code while the slot
+    catalogue does not (and vice versa).  The alias is kept country-scoped by
+    the caller, so it cannot cross-map rates between markets.
+    """
+    key = slot_code_key(value)
+    aliases = [key] if key else []
+    normalized_country = norm(country)
+    if normalized_country in {"ae", "sa", "eg"}:
+        for prefix in (f"{normalized_country}_", f"noon_{normalized_country}_"):
+            if key.startswith(prefix) and len(key) > len(prefix):
+                alias = key[len(prefix):]
+                if alias not in aliases:
+                    aliases.append(alias)
+    return tuple(aliases)
 
 
 def parse_date(value) -> date | None:
@@ -292,6 +311,26 @@ def pricing_options_from_values(cpm_value, cpd_value) -> list[str]:
 
 def pricing_options_for_type(pricing_model: str) -> list[str]:
     return [normalize_pricing_model(pricing_model)]
+
+
+def rate_available_for_window(rate_meta: dict, pricing_model: str, start: date, end: date) -> bool:
+    """Return whether an official rate exists for every required service date."""
+    model = normalize_pricing_model(pricing_model)
+    schedule_key = "cpd_rate_schedule" if model == "CPD" else "cpm_rate_schedule"
+    rate_key = "cpd_rate" if model == "CPD" else "cpm_rate"
+    schedule = rate_meta.get(schedule_key) or {}
+    daily_window = rate_meta.get(f"{model.lower()}_daily_rate_window") or {}
+    daily_start = parse_date(daily_window.get("start"))
+    daily_end = parse_date(daily_window.get("end"))
+    service_days = [
+        start + timedelta(days=offset)
+        for offset in range(max((end - start).days + 1, 1))
+    ]
+    if daily_start and daily_end:
+        required_q4_days = [day for day in service_days if daily_start <= day <= daily_end]
+        if required_q4_days:
+            return all(float(schedule.get(day.isoformat()) or 0) > 0 for day in required_q4_days)
+    return float(rate_meta.get(rate_key) or 0) > 0 or any(float(value or 0) > 0 for value in schedule.values())
 
 
 def is_cpd_booking_row(row: dict) -> bool:
@@ -402,87 +441,192 @@ class BigQueryRepository:
         self,
         start: date,
         end: date,
+        *,
+        allow_q4_legacy_fallback: bool = False,
     ) -> tuple[dict[tuple[str, str], dict], dict[str, dict]]:
-        # The legacy rate card is used outside Q4. Q4 rates are maintained in a
-        # separate daily table where `type` identifies whether `cost` is CPM or CPD.
-        # Split a flight that crosses the boundary so every service date reads from
-        # its correct rate-card source.
-        windows: list[tuple[str, date, date]] = []
-        q4_table = getattr(self.settings, "slot_rate_card_q4_table", "")
+        # Q3 uses one constant legacy rate card. Q4 2026 uses the dedicated
+        # daily card. Automatic recommendations must have a Q4 daily-card
+        # rate; the legacy card is consulted for Q4 only for an explicit manual
+        # selection whose slot has no Q4 record at all.
+        windows: list[tuple[str, date, date, str]] = []
+        q4_table = getattr(self.settings, "slot_rate_card_q4_2026_table", "")
+
+        def rate_card_mode(value: date) -> str:
+            if value.year == 2026 and value.month in {10, 11, 12}:
+                return "q4"
+            if value.month in {7, 8, 9}:
+                return "q3"
+            return "legacy"
+
         cursor = start
         while cursor <= end:
-            in_q4 = cursor.month in {10, 11, 12}
+            mode = rate_card_mode(cursor)
             window_end = cursor
-            while window_end < end and ((window_end + timedelta(days=1)).month in {10, 11, 12}) == in_q4:
+            while window_end < end and rate_card_mode(window_end + timedelta(days=1)) == mode:
                 window_end += timedelta(days=1)
-            table_id = q4_table if in_q4 and q4_table else self.settings.slot_rate_card_table
-            windows.append((table_id, cursor, window_end))
+            table_id = q4_table if mode == "q4" and q4_table else self.settings.slot_rate_card_table
+            windows.append((table_id, cursor, window_end, mode))
             cursor = window_end + timedelta(days=1)
 
-        rows_with_source = [
-            (row, table_id == q4_table)
-            for table_id, window_start, window_end in windows
-            for row in self._table_records_for_window(table_id, window_start, window_end, "date", "dt")
-        ]
+        constant_q3_rows: list[dict] | None = None
+        rows_with_source: list[tuple[dict, str]] = []
+        q4_windows: list[tuple[date, date]] = []
+        for table_id, window_start, window_end, mode in windows:
+            is_q4_rate_card = mode == "q4" and bool(q4_table)
+            if is_q4_rate_card:
+                rows = self._table_records_for_window(table_id, window_start, window_end, "date", "dt")
+                q4_windows.append((window_start, window_end))
+            elif mode == "q3":
+                # Q3's source is a static card.  Reading it without a date
+                # predicate prevents an empty/misaligned `date` column from
+                # dropping valid constant rates.
+                if constant_q3_rows is None:
+                    constant_q3_rows = self._query_records(f"SELECT * FROM `{table_id}`")
+                rows = constant_q3_rows
+            else:
+                rows = self._table_records_for_window(table_id, window_start, window_end, "date", "dt")
+            rows_with_source.extend((row, mode) for row in rows)
+
+        if allow_q4_legacy_fallback:
+            rows_with_source.extend(
+                (row, "q4_legacy_fallback")
+                for window_start, window_end in q4_windows
+                for row in self._table_records_for_window(
+                    self.settings.slot_rate_card_table,
+                    window_start,
+                    window_end,
+                    "date",
+                    "dt",
+                )
+            )
 
         def bucket():
             return {
                 "cpm_rates": [],
                 "cpd_rates": [],
+                "q3_cpm_rates": set(),
+                "q3_cpd_rates": set(),
                 "cpm_rate_schedule": {},
                 "cpd_rate_schedule": {},
+                "q4_slot_present": False,
+                "cpm_daily_rate_window": {},
+                "cpd_daily_rate_window": {},
             }
 
         by_country_slot: dict[tuple[str, str], dict] = defaultdict(bucket)
         by_slot: dict[str, dict] = defaultdict(bucket)
-        for row, is_q4_rate_card in rows_with_source:
+        for row, rate_card_mode in rows_with_source:
             slot_code = str(get_first(row, "slot_code", "slot") or "").strip()
             if not slot_code:
                 continue
-            slot_key = slot_code_key(slot_code)
             country = infer_country(row)
+            slot_keys = rate_card_slot_keys(slot_code, country)
+            if not slot_keys:
+                continue
             dt = parse_date(get_first(row, "date", "dt"))
-            if is_q4_rate_card:
-                rate = parse_number(get_first(row, "cost"))
+            if rate_card_mode == "q4" and q4_table:
+                rate = parse_number(get_first(row, "rate", "cost"))
                 pricing_model = normalize_pricing_model(get_first(row, "type"))
                 cpm_rate = rate if pricing_model == "CPM" else 0.0
                 cpd_rate = rate if pricing_model == "CPD" else 0.0
             else:
                 cpm_rate = parse_number(get_first(row, "cpm_rate"))
                 cpd_rate = parse_number(get_first(row, "cpd_rate"))
-            target_slot = by_slot[slot_key]
-            if cpm_rate > 0:
-                target_slot["cpm_rates"].append(cpm_rate)
-                if dt:
-                    target_slot["cpm_rate_schedule"][dt.isoformat()] = cpm_rate
-            if cpd_rate > 0:
-                target_slot["cpd_rates"].append(cpd_rate)
-                if dt:
-                    target_slot["cpd_rate_schedule"][dt.isoformat()] = cpd_rate
-            if country:
-                target_country_slot = by_country_slot[(country, slot_key)]
+            for slot_key in slot_keys:
+                target_slot = by_slot[slot_key]
+                if rate_card_mode == "q4_legacy_fallback" and target_slot["q4_slot_present"]:
+                    continue
+                if rate_card_mode == "q4":
+                    target_slot["q4_slot_present"] = True
                 if cpm_rate > 0:
-                    target_country_slot["cpm_rates"].append(cpm_rate)
-                    if dt:
-                        target_country_slot["cpm_rate_schedule"][dt.isoformat()] = cpm_rate
+                    target_slot["cpm_rates"].append(cpm_rate)
+                    if rate_card_mode == "q3":
+                        target_slot["q3_cpm_rates"].add(cpm_rate)
+                    elif dt:
+                        date_key = dt.isoformat()
+                        target_slot["cpm_rate_schedule"][date_key] = max(
+                            float(target_slot["cpm_rate_schedule"].get(date_key) or 0),
+                            cpm_rate,
+                        )
+                        if rate_card_mode == "q4":
+                            target_slot["cpm_daily_rate_window"] = {"start": "2026-10-01", "end": "2026-12-31"}
                 if cpd_rate > 0:
-                    target_country_slot["cpd_rates"].append(cpd_rate)
-                    if dt:
-                        target_country_slot["cpd_rate_schedule"][dt.isoformat()] = cpd_rate
+                    target_slot["cpd_rates"].append(cpd_rate)
+                    if rate_card_mode == "q3":
+                        target_slot["q3_cpd_rates"].add(cpd_rate)
+                    elif dt:
+                        date_key = dt.isoformat()
+                        target_slot["cpd_rate_schedule"][date_key] = max(
+                            float(target_slot["cpd_rate_schedule"].get(date_key) or 0),
+                            cpd_rate,
+                        )
+                        if rate_card_mode == "q4":
+                            target_slot["cpd_daily_rate_window"] = {"start": "2026-10-01", "end": "2026-12-31"}
+                if country:
+                    target_country_slot = by_country_slot[(country, slot_key)]
+                    if rate_card_mode == "q4_legacy_fallback" and target_country_slot["q4_slot_present"]:
+                        continue
+                    if rate_card_mode == "q4":
+                        target_country_slot["q4_slot_present"] = True
+                    if cpm_rate > 0:
+                        target_country_slot["cpm_rates"].append(cpm_rate)
+                        if rate_card_mode == "q3":
+                            target_country_slot["q3_cpm_rates"].add(cpm_rate)
+                        elif dt:
+                            date_key = dt.isoformat()
+                            target_country_slot["cpm_rate_schedule"][date_key] = max(
+                                float(target_country_slot["cpm_rate_schedule"].get(date_key) or 0),
+                                cpm_rate,
+                            )
+                            if rate_card_mode == "q4":
+                                target_country_slot["cpm_daily_rate_window"] = {"start": "2026-10-01", "end": "2026-12-31"}
+                    if cpd_rate > 0:
+                        target_country_slot["cpd_rates"].append(cpd_rate)
+                        if rate_card_mode == "q3":
+                            target_country_slot["q3_cpd_rates"].add(cpd_rate)
+                        elif dt:
+                            date_key = dt.isoformat()
+                            target_country_slot["cpd_rate_schedule"][date_key] = max(
+                                float(target_country_slot["cpd_rate_schedule"].get(date_key) or 0),
+                                cpd_rate,
+                            )
+                            if rate_card_mode == "q4":
+                                target_country_slot["cpd_daily_rate_window"] = {"start": "2026-10-01", "end": "2026-12-31"}
 
         def finalize(raw_map: dict) -> dict:
             finalized = {}
             for key, payload in raw_map.items():
                 cpm_rates = payload.get("cpm_rates") or []
                 cpd_rates = payload.get("cpd_rates") or []
-                cpm_rate = round(sum(cpm_rates) / len(cpm_rates), 4) if cpm_rates else 0.0
-                cpd_rate = round(sum(cpd_rates) / len(cpd_rates), 4) if cpd_rates else 0.0
+                q3_cpm_rates = payload.get("q3_cpm_rates") or set()
+                q3_cpd_rates = payload.get("q3_cpd_rates") or set()
+                # Q3 is a constant card, never an average.  Exact duplicate
+                # records are harmless; conflicting official values are left
+                # unavailable so that the planner cannot silently price a
+                # slot with an invented blended rate.
+                cpm_rate = (
+                    next(iter(q3_cpm_rates)) if len(q3_cpm_rates) == 1
+                    else 0.0 if len(q3_cpm_rates) > 1
+                    else round(sum(cpm_rates) / len(cpm_rates), 4) if cpm_rates else 0.0
+                )
+                cpd_rate = (
+                    next(iter(q3_cpd_rates)) if len(q3_cpd_rates) == 1
+                    else 0.0 if len(q3_cpd_rates) > 1
+                    else round(sum(cpd_rates) / len(cpd_rates), 4) if cpd_rates else 0.0
+                )
+                pricing_options = pricing_options_from_values(cpm_rate, cpd_rate)
+                if payload.get("cpm_rate_schedule") and "CPM" not in pricing_options:
+                    pricing_options.append("CPM")
+                if payload.get("cpd_rate_schedule") and "CPD" not in pricing_options:
+                    pricing_options.append("CPD")
                 finalized[key] = {
                     "cpm_rate": cpm_rate,
                     "cpd_rate": cpd_rate,
                     "cpm_rate_schedule": dict(payload.get("cpm_rate_schedule") or {}),
                     "cpd_rate_schedule": dict(payload.get("cpd_rate_schedule") or {}),
-                    "pricing_options": pricing_options_from_values(cpm_rate, cpd_rate),
+                    "cpm_daily_rate_window": dict(payload.get("cpm_daily_rate_window") or {}),
+                    "cpd_daily_rate_window": dict(payload.get("cpd_daily_rate_window") or {}),
+                    "pricing_options": pricing_options,
                 }
             return finalized
 
@@ -593,7 +737,15 @@ class BigQueryRepository:
         recent_booked_views: dict[tuple[str, str], int] | None = None
         exclude_cpd_by_budget = False
         if req is not None:
-            rate_by_country_slot, rate_by_slot = self._fetch_rate_card_map(req.start_date, req.end_date)
+            # Flights run from 09:00 on the start date up to, but excluding,
+            # 09:00 on the end date.  Do not make a slot look priceable based
+            # only on a rate that starts at the campaign's end boundary.
+            last_service_date = req.end_date - timedelta(days=1) if req.end_date > req.start_date else req.start_date
+            rate_by_country_slot, rate_by_slot = self._fetch_rate_card_map(
+                req.start_date,
+                last_service_date,
+                allow_q4_legacy_fallback=not enforce_eligibility,
+            )
             if enforce_eligibility:
                 cpd_blocked_slot_keys = self._fetch_booked_cpd_slot_keys(req)
                 recent_booked_views = self._fetch_recent_booked_views(req)
@@ -614,7 +766,18 @@ class BigQueryRepository:
                 )
                 if booked_views < MIN_RECENT_BOOKED_VIEWS:
                     continue
-            rate_meta = rate_by_country_slot.get((country, normalized_slot_code)) or rate_by_slot.get(normalized_slot_code) or {}
+            rate_meta = {}
+            # Prefer a country-specific rate card match, including the safe
+            # country-prefix alias used by Egypt's rate-card extracts.
+            for rate_key in rate_card_slot_keys(slot_code, country):
+                rate_meta = rate_by_country_slot.get((country, rate_key)) or {}
+                if rate_meta:
+                    break
+            if not rate_meta:
+                for rate_key in rate_card_slot_keys(slot_code, country):
+                    rate_meta = rate_by_slot.get(rate_key) or {}
+                    if rate_meta:
+                        break
             pricing_model = normalize_pricing_model(get_first(row, "type", "pricing_type", "buy_type", "pricing_model") or infer_pricing_model_from_slot(slot_code, slot_name))
             if (
                 enforce_eligibility
@@ -625,22 +788,19 @@ class BigQueryRepository:
                 )
             ):
                 continue
-            has_rate_card = bool(
-                rate_meta
-                and (
-                    rate_meta.get("cpm_rate")
-                    or rate_meta.get("cpd_rate")
-                    or rate_meta.get("cpm_rate_schedule")
-                    or rate_meta.get("cpd_rate_schedule")
-                )
-            )
+            pricing_options = [
+                option
+                for option in (rate_meta.get("pricing_options") or [])
+                if rate_available_for_window(rate_meta, option, req.start_date, last_service_date)
+            ] if req is not None else list(rate_meta.get("pricing_options") or [])
+            has_rate_card = bool(pricing_options)
+            # Commercial plans must never be priced from a synthetic default.
+            # Keep unpriced inventory visible only in the unrestricted manual
+            # catalogue, where it can be diagnosed rather than booked.
+            if req is not None and enforce_eligibility and not has_rate_card:
+                continue
             cpm_rate = float(rate_meta.get("cpm_rate") or 0.0) if has_rate_card else 0.0
             cpd_rate = float(rate_meta.get("cpd_rate") or 0.0) if has_rate_card else 0.0
-            pricing_options = pricing_options_for_type(pricing_model)
-            if pricing_model == "CPM" and cpm_rate <= 0:
-                cpm_rate = float(self.settings.default_cpm)
-            if pricing_model == "CPD" and cpd_rate <= 0:
-                cpd_rate = float(self.settings.default_cpd)
             default_rate = cpd_rate if pricing_model == "CPD" else cpm_rate
             catalog.append(
                 {
@@ -656,6 +816,7 @@ class BigQueryRepository:
                     "type": pricing_model,
                     "pricing_model": pricing_model,
                     "pricing_options": pricing_options,
+                    "rate_available": has_rate_card,
                     "cpm_rate": cpm_rate,
                     "cpd_rate": cpd_rate,
                     "rate": default_rate,

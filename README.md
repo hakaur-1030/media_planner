@@ -8,7 +8,7 @@ Source tables:
 
 - `noonbiadmon.admon_business_analytics.slot_base_data`
 - `noonbiadmon.admon_business_analytics.slot_rate_card_base` (non-Q4)
-- `noonbiadmon.admon_business_analytics.rate_card_Q4_slotwise` (Oct 1–Dec 31 daily rates)
+- `noonbiadmon.admon_business_analytics.rate_card_Q4` (Oct 1–Dec 31, 2026 daily rates)
 - `noonbiadmon.admon_business_analytics.campaign_booking_data_past`
 - `noonbiadmon.admon_business_analytics.adgroup_booked_delivered` (12-month slot eligibility; minimum 100 booked views)
 - `noonbiadmon.admon_business_analytics.campaign_delivery_data_past_performance`
@@ -42,7 +42,7 @@ export DELIVERY_TABLE=noonbiadmon.admon_business_analytics.campaign_delivery_dat
 export FORECAST_TABLE=noonbiadmon.admon_business_analytics.forecasting
 export SLOT_DATA_TABLE=noonbiadmon.admon_business_analytics.slot_base_data
 export SLOT_RATE_CARD_TABLE=noonbiadmon.admon_business_analytics.slot_rate_card_base
-export SLOT_RATE_CARD_Q4_TABLE=noonbiadmon.admon_business_analytics.rate_card_Q4_slotwise
+export SLOT_RATE_CARD_Q4_2026_TABLE=noonbiadmon.admon_business_analytics.rate_card_Q4
 export PLAN_RUNS_TABLE=noonbiadmon.admon_business_analytics.media_plan_runs
 export PLAN_LINES_TABLE=noonbiadmon.admon_business_analytics.media_plan_lines
 export PUBLIC_APP_URL=http://127.0.0.1:8000

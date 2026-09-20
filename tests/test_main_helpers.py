@@ -2,7 +2,7 @@ from datetime import date, timedelta
 import unittest
 from unittest.mock import Mock, patch
 
-from main import budget_split_deviations, refresh_regeneration_selection, regenerate_media_plan
+from main import budget_split_deviations, recommendation_starting_count, refresh_regeneration_selection, regenerate_media_plan
 from models import MediaPlanRequest
 
 
@@ -14,9 +14,19 @@ class RegenerationHelpersTest(unittest.TestCase):
             "marketplace_budget_split": {"core": 70.0, "supermall": 30.0},
             "actual_marketplace_budget_split": {"core": 72.8, "supermall": 27.2},
         }
-        differences = budget_split_deviations(diagnostics)
+        differences = budget_split_deviations(diagnostics, reporting_threshold_pct=0.1)
         self.assertEqual(len(differences), 4)
         self.assertIn("requested 66.7% but received 63.1%", differences[0])
+
+    def test_recommendation_count_is_a_budget_based_starting_point(self):
+        request = self.make_request()
+        request.marketplace = "both"
+        request.budget = 10_000
+        self.assertEqual(recommendation_starting_count(request), 6)
+        request.budget = 11_000
+        self.assertEqual(recommendation_starting_count(request), 10)
+        request.countries = ["ae", "sa"]
+        self.assertEqual(recommendation_starting_count(request), 10)
 
     def make_request(self):
         start = date.today() + timedelta(days=2)

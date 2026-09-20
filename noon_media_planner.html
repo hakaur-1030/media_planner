@@ -514,8 +514,8 @@ td.mono{font-family:var(--mono);font-size:11px}
       <button class="btn ghost" onclick="regeneratePlan()">Regenerate plan</button>
       <button class="btn ghost" onclick="copyPlanUiLink()">Copy plan link</button>
       <button class="btn ghost" onclick="exportCsv()">Export CSV</button>
-      <button class="btn ghost" onclick="printPlan('executive')">Executive summary</button>
-      <button class="btn pri" onclick="printPlan('detailed')">Detailed summary</button>
+      <button class="btn ghost" onclick="openPlanSummary('executive')">Executive summary</button>
+      <button class="btn pri" onclick="openPlanSummary('detailed')">Detailed summary</button>
     </div>
   </div>
   <div class="metric-grid" id="metricGrid"></div>
@@ -1067,14 +1067,22 @@ function escapeHtml(value){
   return String(value||'').replace(/[&<>"']/g, char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 }
 
-function apiErrorFromResponse(data,fallback,raw=''){
+function apiErrorFromResponse(data,fallback,raw='',response=null){
   const detail=data&&data.detail;
   const structured=detail&&typeof detail==='object';
   const error=new Error((structured&&detail.message)||fallback);
-  error.technicalDetail=(structured&&detail.technical_detail)||(typeof detail==='string'?detail:raw)||'';
+  const allocationNotices=structured&&detail.diagnostics&&detail.diagnostics.split_deviation_notices;
+  const allocationDetail=Array.isArray(allocationNotices)&&allocationNotices.length
+    ? allocationNotices.map(item=>`${item.dimension} split '${item.name}': requested ${Number(item.requested_pct).toFixed(1)}%, closest feasible ${Number(item.actual_pct).toFixed(1)}% (deviation ${Number(item.deviation_pct).toFixed(1)} percentage points). Reason: ${item.reason}`).join('\n\n')
+    : '';
+  const diagnostics=structured&&detail.diagnostics?JSON.stringify(detail.diagnostics,null,2):'';
+  error.technicalDetail=(structured&&detail.technical_detail)||allocationDetail||diagnostics||(typeof detail==='string'?detail:raw)||'';
+  error.title=allocationDetail?'Requested split cannot be met':'';
   error.reference=(structured&&detail.reference)||'';
   error.contact=(structured&&detail.contact)||'';
   error.source=(structured&&detail.source)||'';
+  error.endpoint=(structured&&detail.endpoint)||(response&&new URL(response.url).pathname)||'';
+  error.status=(response&&response.status)||'';
   return error;
 }
 
@@ -1084,17 +1092,20 @@ function showErrorDialog(error,fallback='Unable to complete the request'){
   if(!backdrop){ alert(value.message||fallback); return; }
   const isNetworkError=value instanceof TypeError&&!value.source;
   const displayMessage=isNetworkError?'The Media Planner server could not be reached. Please check the connection and try again.':(value.message||fallback);
-  document.getElementById('errorDialogTitle').textContent=value.source==='bigquery'?'Data service unavailable':fallback;
+  document.getElementById('errorDialogTitle').textContent=value.title||(value.source==='bigquery'?'Data service unavailable':fallback);
   document.getElementById('errorDialogMessage').textContent=displayMessage;
   const meta=[];
   if(value.contact) meta.push(`Responsible team: ${value.contact}`);
   else if(isNetworkError) meta.push('Responsible team: Engineering / Infrastructure POC');
   if(value.reference) meta.push(`Reference: ${value.reference}`);
+  if(value.endpoint) meta.push(`API: ${value.endpoint}${value.status?` (HTTP ${value.status})`:''}`);
+  else if(value.status) meta.push(`HTTP ${value.status}`);
+  if(value.source) meta.push(`Source: ${value.source}`);
   document.getElementById('errorDialogMeta').textContent=meta.join(' · ');
   const technical=String(value.technicalDetail||(isNetworkError?value.message:'')||'').trim();
   const technicalWrap=document.getElementById('errorDialogTechnicalWrap');
   technicalWrap.style.display=technical?'block':'none';
-  technicalWrap.open=false;
+  technicalWrap.open=Boolean(technical && (value.status>=500 || value.source==='bigquery'));
   document.getElementById('errorDialogTechnical').textContent=technical;
   backdrop.classList.add('show');
 }
@@ -1470,7 +1481,7 @@ async function fetchSavedPreselection(saved){
   const raw=await response.text();
     const data=raw?(()=>{try{return JSON.parse(raw);}catch(_){return {detail:raw};}})():{};
     if(!response.ok){
-      throw apiErrorFromResponse(data,'Unable to fetch slot suggestions',raw);
+      throw apiErrorFromResponse(data,'Unable to fetch slot suggestions',raw,response);
     }
     S.slotSuggestions=(data.suggestions||[]).map(slot=>applySlotPricing({...slot,marketplace:slot.marketplace||getSlotMarketplace(slot)},slot.pricing_model));
     S.availableSlotCatalog=(data.available_slots||[]).map(slot=>applySlotPricing({...slot,marketplace:slot.marketplace||getSlotMarketplace(slot)},slot.pricing_model));
@@ -1499,7 +1510,7 @@ async function loadSavedPlan(target, reference){
     const raw=await res.text();
     const data=raw?(()=>{try{return JSON.parse(raw);}catch(_){return {detail:raw};}})():{};
     if(!res.ok){
-      throw apiErrorFromResponse(data,'Unable to load saved plan',raw);
+      throw apiErrorFromResponse(data,'Unable to load saved plan',raw,res);
     }
     const request=data.request||{};
     applyRequestToState(request);
@@ -1578,6 +1589,17 @@ function toggleCountry(el,v){
   }else{
     S.countries.push(v);
     el.className='pill on';
+  }
+  // A single-market plan should default to that market's local currency.
+  // Users can still choose another currency afterwards for conversion views.
+  if(S.countries.length===1){
+    const localCurrency={ae:'AED',sa:'SAR',eg:'EGP'}[S.countries[0]];
+    if(localCurrency){
+      S.currency=localCurrency;
+      const currencyInput=document.getElementById('bCur');
+      if(currencyInput) currencyInput.value=localCurrency;
+      updateBudgetBar();
+    }
   }
 }
 function toggleComcat(el,v){
@@ -1722,7 +1744,11 @@ function renderManualSlotOptions(){
   const select=document.getElementById('manualSlotCode');
   if(!select) return;
   const options=manualSlotsForCountry(country);
-  select.innerHTML='<option value="">Select slot</option>'+options.map(slot=>`<option value="${slot.slot_code}">${slot.slot_name} (${slot.slot_code}) · ${views10(slot.available_views||0)} views</option>`).join('');
+  select.innerHTML='<option value="">Select slot</option>'+options.map(slot=>{
+    const unavailable=slot.rate_available===false;
+    const label=`${slot.slot_name} (${slot.slot_code}) · ${unavailable?'Unavailable — no official rate':`${views10(slot.available_views||0)} views`}`;
+    return `<option value="${slot.slot_code}" ${unavailable?'disabled':''}>${label}</option>`;
+  }).join('');
   syncManualSlotPricingOptions();
 }
 
@@ -1904,6 +1930,10 @@ function toggleBrowsableSlot(key){
   }
   const isManual=S.slotBrowseMode==='manual';
   const source=(isManual?S.manualSlotCatalog:S.slotSuggestions).find(slot=>(slot.slot_key||slotKey(slot.country,slot.slot_code))===key);
+  if(source?.rate_available===false){
+    alert('This slot is unavailable because no official rate-card price exists for the selected dates.');
+    return;
+  }
   if(source) upsertSelectedSlot({...source,slot_key:key,foc:false,manual:isManual});
   renderSlotPreselection();
 }
@@ -1933,6 +1963,7 @@ function addManualSelectedSlot(){
   if(!country || !slotCode){ alert('Select a country and slot.'); return; }
   const slot=S.manualSlotCatalog.find(item=>item.country===country && item.slot_code===slotCode);
   if(!slot){ alert('Selected slot was not found in the slot catalog.'); return; }
+  if(slot.rate_available===false){ alert('This slot is unavailable because no official rate-card price exists for the selected dates.'); return; }
   upsertSelectedSlot({
     slot_key:slotKey(country,slotCode),
     country,
@@ -2009,19 +2040,18 @@ function renderSlotPreselection(){
     const key=slot.slot_key||slotKey(slot.country,slot.slot_code);
     const picked=S.selectedSlots.some(item=>item.slot_key===key);
     const isRecommended=S.slotSuggestions.some(item=>item.slot_key===key);
+    const unavailable=slot.rate_available===false;
     return `<div class="card" style="margin:0;padding:14px;border-color:${picked?'var(--blue)':'var(--border)'}">
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
         <div>
           <div style="font-size:13px;font-weight:600">${displayCountryCode(slot.country)} · ${slot.slot_name} <span class="country-chip">${isRecommended?'Recommended':'Manual catalog'}</span></div>
           <div class="slot-meta">${slot.slot_code} · ${(slot.marketplace||'').toUpperCase()} · ${slot.page||'Page pending'} · ${String(slot.pricing_model||'CPM').toUpperCase()}</div>
           <div class="slot-meta">${displayCategoryLabel(slot.category)||'No category'}${slot.zone?` · Zone ${slot.zone}`:''}${slot.dimension?` · ${slot.dimension}`:''}</div>
-          <div class="slot-meta">${slotInventorySummary(slot)}</div>
+          <div class="slot-meta">${unavailable?'Unavailable — no official rate for these dates':slotInventorySummary(slot)}</div>
         </div>
         <div style="display:flex;flex-direction:column;gap:8px;min-width:122px">
-          <select class="plan-cell-select" onchange="updateBrowseSlotPricing('${key}',this.value)">
-            ${pricingOptionsHtml(slot,slot.pricing_model)}
-          </select>
-          <button class="btn ${picked?'pri':'ghost'}" type="button" style="padding:7px 12px;font-size:12px" onclick="toggleBrowsableSlot('${key}')">${picked?'Selected':'Select'}</button>
+          ${unavailable?'<span class="country-chip" style="color:var(--red-text)">Unavailable</span>':`<select class="plan-cell-select" onchange="updateBrowseSlotPricing('${key}',this.value)">${pricingOptionsHtml(slot,slot.pricing_model)}</select>`}
+          <button class="btn ${picked?'pri':'ghost'}" type="button" style="padding:7px 12px;font-size:12px" onclick="toggleBrowsableSlot('${key}')" ${unavailable?'disabled':''}>${picked?'Selected':unavailable?'Unavailable':'Select'}</button>
         </div>
       </div>
     </div>`;
@@ -2087,7 +2117,7 @@ async function openPreselection(){
     const raw=await res.text();
     const data=raw?(()=>{try{return JSON.parse(raw);}catch(_){return {detail:raw};}})():{};
     if(!res.ok){
-      throw apiErrorFromResponse(data,'Unable to fetch slot suggestions',raw);
+      throw apiErrorFromResponse(data,'Unable to fetch slot suggestions',raw,res);
     }
     S.slotSuggestions=(data.suggestions||[]).map(slot=>applySlotPricing({...slot,marketplace:slot.marketplace||getSlotMarketplace(slot)},slot.pricing_model));
     S.availableSlotCatalog=(data.available_slots||[]).map(slot=>applySlotPricing({...slot,marketplace:slot.marketplace||getSlotMarketplace(slot)},slot.pricing_model));
@@ -2126,7 +2156,7 @@ async function loadOptions(){
     const raw=await res.text();
     const data=raw?(()=>{try{return JSON.parse(raw);}catch(_){return {detail:raw};}})():{};
     if(!res.ok){
-      throw apiErrorFromResponse(data,'Unable to load planner options',raw);
+      throw apiErrorFromResponse(data,'Unable to load planner options',raw,res);
     }
     S.slotCatalog=(data.slots||[]).map(slot=>applySlotPricing({...slot,marketplace:slot.marketplace||getSlotMarketplace(slot),category:slot.category||slot.page||'',zone:slot.zone||'',dimension:slot.dimension||''},slot.pricing_model));
     if(!S.manualSlotCatalog.length) S.manualSlotCatalog=[...S.slotCatalog];
@@ -2339,7 +2369,7 @@ async function buildPlan(){
     const raw=await res.text();
     const data=raw?(()=>{try{return JSON.parse(raw);}catch(_){return {detail:raw};}})():{};
     if(!res.ok){
-      throw apiErrorFromResponse(data,'Unable to create media plan',raw);
+      throw apiErrorFromResponse(data,'Unable to create media plan',raw,res);
     }
     if(!data.rows||!data.rows.length){
       const d=data.diagnostics||{};
@@ -2354,13 +2384,19 @@ async function buildPlan(){
     S.rows=normalizeLoadedRows(data.rows||[]);
     S.phFilter='All';
     nav(5);
+    const warningDetails=[];
     if((S.planDiagnostics.omitted_selected_slots||[]).length){
-      const message=S.planDiagnostics.omitted_selected_slots
-        .map(item=>`${item.slot_name} (${item.buy_type}): ${item.reason}`)
-        .join('\n');
-      const warning=new Error('Some selected slots could not be placed in the final plan. Review the technical details below.');
-      warning.technicalDetail=message;
-      showErrorDialog(warning,'Plan generated with slot warnings');
+      warningDetails.push(...S.planDiagnostics.omitted_selected_slots
+        .map(item=>`Unplaced slot — ${item.slot_name} (${item.buy_type}): ${item.reason}`));
+    }
+    if((S.planDiagnostics.split_deviation_notices||[]).length){
+      warningDetails.push(...S.planDiagnostics.split_deviation_notices
+        .map(item=>`${item.dimension} split '${item.name}': requested ${Number(item.requested_pct).toFixed(1)}%, received ${Number(item.actual_pct).toFixed(1)}% (deviation ${Number(item.deviation_pct).toFixed(1)} percentage points). Reason: ${item.reason}`));
+    }
+    if(warningDetails.length){
+      const warning=new Error('Plan generated with allocation constraints. Review the split and slot details below.');
+      warning.technicalDetail=warningDetails.join('\n\n');
+      showErrorDialog(warning,'Plan generated with allocation warnings');
     }
   }catch(e){
     document.getElementById('navChip').textContent='Plan failed';
@@ -2374,9 +2410,8 @@ function renderAll(){
   const brand=displaySelectedBrandNames();
   const countries=displayCountries()||'Countries';
   document.getElementById('planBrandTitle').textContent=brand+' — '+countries+' recommendation';
-  const perCountryMin=(S.budget<=10000?6:10);
-  const totalMin=perCountryMin*Math.max(S.countries.length,1);
-  document.getElementById('planToolbarNote').textContent=(S.rows.length||0)+' editable country-slot recommendations. Target: '+perCountryMin+'+ per country ('+totalMin+' total) when inventory exists.'+(S.planCode?(' Media code: '+S.planCode+'.'):'');
+  const startingGuidance=(S.budget<=10000?6:10);
+  document.getElementById('planToolbarNote').textContent=(S.rows.length||0)+' editable country-slot recommendations. Adaptive guidance starts at '+startingGuidance+' candidates per plan and changes only when allocation quality requires it.'+(S.planCode?(' Media code: '+S.planCode+'.'):'');
   const total=S.rows.reduce((a,r)=>a+netAmount(r),0);
   const grossTotal=S.rows.reduce((a,r)=>a+grossAmount(r),0);
   const onDeckRows=S.rows.filter(r=>String(r.buyType||'').toUpperCase()!=='OFF-DECK');
@@ -2463,7 +2498,8 @@ function slotSelectHtml(id,row){
   });
   return `<select class="plan-cell-select slot-select-wide" title="Choose slot" onchange="updateRowField(${id},'slot_code',this.value)"><option value="">Select slot</option>${options.map(s=>{
     const label=`${displayCountryCode(s.country)} · ${s.slot_name||s.slot_code} · ${displayCategoryLabel(s.page||s.category)||'Page pending'} · ${s.slot_code}`;
-    return `<option value="${s.slot_code}" ${s.slot_code===row.slot_code?'selected':''}>${label}</option>`;
+    const unavailable=s.rate_available===false;
+    return `<option value="${s.slot_code}" ${s.slot_code===row.slot_code?'selected':''} ${unavailable?'disabled':''}>${label}${unavailable?' · Unavailable — no official rate':''}</option>`;
   }).join('')}</select>`;
 }
 
@@ -2675,7 +2711,7 @@ async function regeneratePlan(){
     const res=await fetch(`/api/media-plan/${S.planId}/regenerate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const raw=await res.text();
     const data=raw?(()=>{try{return JSON.parse(raw);}catch(_){return {detail:raw};}})():{};
-    if(!res.ok){ throw apiErrorFromResponse(data,'Unable to regenerate plan',raw); }
+    if(!res.ok){ throw apiErrorFromResponse(data,'Unable to regenerate plan',raw,res); }
     S.planId=(data.summary&&data.summary.plan_id)||S.planId;
     S.planCode=(data.summary&&data.summary.sheet_plan_code)||S.planId||S.planCode;
     S.rows=normalizeLoadedRows(data.rows||[]);
@@ -2703,7 +2739,7 @@ function addRow(){
   renderAll();
 }
 
-function printPlan(mode='detailed'){
+function openPlanSummary(mode='detailed'){
   const cur=S.currency||'AED';
   const brand=displaySelectedBrandNames();
   const countries=displayCountries()||'-';
@@ -2783,7 +2819,12 @@ function printPlan(mode='detailed'){
   win.document.write(`<!DOCTYPE html><html><head><title>${mode==='executive'?'Executive Summary':'Detailed Summary'}</title><style>
     :root{--ink:#1f2128;--muted:#636875;--gold:#ffcf33;--line:#e7dba9}
     *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    @page{size:landscape;margin:12mm}
+    @media print{thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}}
     body{font-family:'DM Sans',sans-serif;padding:28px;color:var(--ink);background:#fffef9}
+    .summary-actions{position:sticky;top:0;z-index:2;display:flex;justify-content:flex-end;gap:8px;padding:0 0 14px;background:#fffef9}
+    .summary-actions button{border:1px solid #d9c87c;border-radius:9px;background:#fff;padding:8px 12px;cursor:pointer;font:600 13px 'DM Sans',sans-serif;color:var(--ink)}
+    .summary-actions button.primary{background:#ffcf33;border-color:#ffcf33}
     .printbrand{display:flex;align-items:center;justify-content:center;margin-bottom:16px;padding:10px 18px}
     .printbrand img{display:block;max-height:56px;max-width:240px;object-fit:contain}
     .header{margin-bottom:20px;padding:22px 24px;border:1px solid var(--line);border-radius:24px;background:linear-gradient(135deg,#1f2128 0,#343946 100%);box-shadow:0 18px 40px rgba(31,33,40,.12);color:#fff}
@@ -2797,13 +2838,15 @@ function printPlan(mode='detailed'){
     .sumlabel{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700;margin-bottom:6px}
     .sumvalue{font-size:22px;font-weight:700;color:var(--ink)}
     .sumsub{font-size:12px;color:var(--muted);margin-top:3px}
-    table{width:100%;border-collapse:separate;border-spacing:0;font-size:${mode==='executive'?'12px':'11px'};border:1px solid var(--line);border-radius:18px;overflow:hidden}
+    .table-scroll{width:100%;overflow:auto;border:1px solid var(--line);border-radius:18px;background:#fff}
+    table{width:max-content;min-width:${mode==='executive'?'1350px':'2450px'};border-collapse:separate;border-spacing:0;font-size:${mode==='executive'?'12px':'11px'}}
     th,td{padding:9px 10px;vertical-align:top;border-bottom:1px solid #eee7cb}
     th{background:linear-gradient(180deg,#fff4c0,#ffefaa);text-align:left;color:#2f333e;font-size:10px;letter-spacing:.05em;text-transform:uppercase}
     tbody tr:nth-child(even) td{background:#fffdf6}
     tbody tr:nth-child(odd) td{background:#fff}
     tbody tr:last-child td{border-bottom:none}
   </style></head><body>
+    <div class="summary-actions"><button type="button" onclick="window.close()">Close</button><button class="primary" type="button" onclick="window.print()">Print</button></div>
     <div class="printbrand"><img src="/static/logo.png" alt="noon ads logo"></div>
     <div class="header">
       <h1>${brand}</h1>
@@ -2816,11 +2859,10 @@ function printPlan(mode='detailed'){
       </div>
     </div>
     <div class="summary">${summaryCards}</div>
-    <table><thead>${tableHead}</thead><tbody>${tableRows}</tbody></table>
+    <div class="table-scroll"><table><thead>${tableHead}</thead><tbody>${tableRows}</tbody></table></div>
   </body></html>`);
   win.document.close();
   win.focus();
-  win.print();
 }
 
 function exportCsv(){
