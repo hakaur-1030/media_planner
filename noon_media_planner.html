@@ -328,13 +328,13 @@ td.mono{font-family:var(--mono);font-size:11px}
       <div style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.05em;text-transform:uppercase;margin-bottom:10px">Marketplace budget split</div>
       <div class="w-row">
         <span class="w-lbl">Core</span>
-        <input type="range" min="0" max="100" step="5" value="70" id="mkCoreW" oninput="syncMarketplaceSplit(this.value)"/>
-        <span class="w-val" id="mkCoreWv">70%</span>
+        <input type="range" min="0" max="100" step="5" value="85" id="mkCoreW" oninput="syncMarketplaceSplit(this.value)"/>
+        <span class="w-val" id="mkCoreWv">85%</span>
       </div>
       <div class="w-row">
         <span class="w-lbl">Supermall</span>
-        <input type="range" min="0" max="100" step="5" value="30" id="mkSuperW" oninput="syncMarketplaceSplit(100-this.value)"/>
-        <span class="w-val" id="mkSuperWv">30%</span>
+        <input type="range" min="0" max="100" step="5" value="15" id="mkSuperW" oninput="syncMarketplaceSplit(100-this.value)"/>
+        <span class="w-val" id="mkSuperWv">15%</span>
       </div>
     </div>
   </div>
@@ -585,7 +585,10 @@ td.mono{font-family:var(--mono);font-size:11px}
       <summary id="errorDialogTechnicalSummary">Technical error details</summary>
       <pre id="errorDialogTechnical"></pre>
     </details>
-    <div class="btn-row"><button class="btn pri" id="errorDialogCloseButton" type="button" onclick="closeErrorDialog()">Close</button></div>
+    <div class="btn-row">
+      <button class="btn" id="errorDialogRetryButton" type="button" onclick="retryErrorDialog()" style="display:none">Retry</button>
+      <button class="btn pri" id="errorDialogCloseButton" type="button" onclick="closeErrorDialog()">Close</button>
+    </div>
   </div>
 </div>
 <script>
@@ -978,7 +981,7 @@ function grossRate(row){
 }
 
 const S={
-  bTag:'', brandSearchTimer:null, brands:[], brandSplits:{}, comcats:[], comcatSplits:{}, countries:[], marketplace:'both', marketplaceCorePct:70, marketplaceSupermallPct:30, subBrands:[], obj:'both', rW:60, oW:40,
+  bTag:'', brandSearchTimer:null, brands:[], brandSplits:{}, comcats:[], comcatSplits:{}, countries:[], marketplace:'both', marketplaceCorePct:85, marketplaceSupermallPct:15, supermallSplitConfirmedPct:null, subBrands:[], obj:'both', rW:60, oW:40,
   phases:[], phaseSplits:{},
   rows:[], totalBudget:0, offdeckBudget:0, budget:0, discountPct:0, currency:'AED', budgetLocked:false, tabFilter:'all', phFilter:'All',
   flightStart:'', flightEnd:'', planId:'', planCode:'', excludedSlotKeys:[], slotCatalog:[],
@@ -1096,6 +1099,8 @@ function apiErrorFromResponse(data,fallback,raw='',response=null){
   return error;
 }
 
+let errorDialogRetryAction=null;
+
 function showErrorDialog(error,fallback='Unable to complete the request'){
   const value=error instanceof Error?error:new Error(String(error||fallback));
   const backdrop=document.getElementById('errorDialogBackdrop');
@@ -1119,10 +1124,23 @@ function showErrorDialog(error,fallback='Unable to complete the request'){
   document.getElementById('errorDialogTechnicalSummary').textContent=value.detailsLabel||'Technical error details';
   document.getElementById('errorDialogTechnical').textContent=technical;
   document.getElementById('errorDialogCloseButton').textContent=value.confirmText||'Close';
+  errorDialogRetryAction=typeof value.retryAction==='function'?value.retryAction:null;
+  const retryButton=document.getElementById('errorDialogRetryButton');
+  retryButton.style.display=errorDialogRetryAction?'inline-flex':'none';
+  retryButton.textContent=value.retryLabel||'Retry';
   backdrop.classList.add('show');
 }
 
-function closeErrorDialog(){ document.getElementById('errorDialogBackdrop')?.classList.remove('show'); }
+function closeErrorDialog(){
+  document.getElementById('errorDialogBackdrop')?.classList.remove('show');
+  errorDialogRetryAction=null;
+}
+
+function retryErrorDialog(){
+  const retryAction=errorDialogRetryAction;
+  closeErrorDialog();
+  if(retryAction) retryAction();
+}
 
 function showAllocationWarnings(diagnostics){
   const warningDetails=[];
@@ -1321,6 +1339,7 @@ function syncMarketplaceSplit(value){
   const corePct=Math.max(0,Math.min(100,Number(value)||0));
   S.marketplaceCorePct=corePct;
   S.marketplaceSupermallPct=100-corePct;
+  S.supermallSplitConfirmedPct=null;
   syncMarketplaceSplitUi();
 }
 
@@ -1354,8 +1373,9 @@ function applyRequestToState(request){
   S.comcats=[...(req.comcats||[])];
   S.comcatSplits={...(req.comcat_budget_splits||{})};
   S.marketplace=req.marketplace||'both';
-  S.marketplaceCorePct=req.marketplace_core_pct!=null?Number(req.marketplace_core_pct):70;
+  S.marketplaceCorePct=req.marketplace_core_pct!=null?Number(req.marketplace_core_pct):85;
   S.marketplaceSupermallPct=100-S.marketplaceCorePct;
+  S.supermallSplitConfirmedPct=null;
   S.subBrands=[];
   S.phaseSplits={...(req.phase_budget_splits||{})};
   S.obj=normalizeObjective(req.objective)||'both';
@@ -1579,6 +1599,8 @@ async function loadSavedPlan(target, reference){
   }catch(e){
     setLoadStatus(e.message||'Unable to load saved plan.', 'error');
     document.getElementById('navChip').textContent='Load failed';
+    e.retryAction=()=>loadSavedPlan(target,ref);
+    e.retryLabel='Retry loading plan';
     showErrorDialog(e,'Unable to load saved plan');
   }
 }
@@ -1586,6 +1608,18 @@ async function loadSavedPlan(target, reference){
 function nav(n){
   const startPanel=document.getElementById('p1');
   if(n>1 && startPanel && startPanel.classList.contains('show') && !validatePlanInitialization(true)) return;
+  if(n===3 && S.marketplace==='both' && Number(S.marketplaceSupermallPct||0)>15 && S.supermallSplitConfirmedPct!==Number(S.marketplaceSupermallPct)){
+    const warning=new Error(`Supermall share is ${Number(S.marketplaceSupermallPct)}%, above the recommended 15% starting split. Please recheck inputs once before continuing.`);
+    warning.title='Supermall share is high';
+    warning.confirmText='Revisit inputs';
+    warning.retryLabel='Continue with current split';
+    warning.retryAction=()=>{
+      S.supermallSplitConfirmedPct=Number(S.marketplaceSupermallPct);
+      nav(3);
+    };
+    showErrorDialog(warning,'Please recheck the Supermall split');
+    return;
+  }
   [1,2,3,4,5].forEach(i=>{
     document.getElementById('p'+i).classList.remove('show');
     document.getElementById('sn'+i).className='np'+(i===n?' active':i<n?' done':'');
@@ -1599,6 +1633,7 @@ function nav(n){
 
 function setMarketplace(v){
   S.marketplace=v;
+  S.supermallSplitConfirmedPct=null;
   const both=document.getElementById('mk-both');
   const core=document.getElementById('mk-core');
   const sm=document.getElementById('mk-supermall');
@@ -2165,6 +2200,8 @@ async function openPreselection(){
     S.bTag=(data.diagnostics&&data.diagnostics.brand_tag)||S.bTag||'';
     nav(4);
   }catch(e){
+    e.retryAction=()=>openPreselection();
+    e.retryLabel='Retry slot suggestions';
     showErrorDialog(e,'Unable to open slot preselection');
   }
 }
@@ -2197,6 +2234,8 @@ async function loadOptions(){
     syncCountryPills();
   }catch(e){
     document.getElementById('navChip').textContent='Data load failed';
+    e.retryAction=()=>loadOptions();
+    e.retryLabel='Retry loading options';
     showErrorDialog(e,'Unable to load planner options');
   }
 }
@@ -2418,6 +2457,10 @@ async function buildPlan(){
     showAllocationWarnings(S.planDiagnostics);
   }catch(e){
     document.getElementById('navChip').textContent='Plan failed';
+    // Keep the preselection state and current panel intact. Retrying rebuilds
+    // the request from the same campaign inputs and selected slots.
+    e.retryAction=()=>buildPlan();
+    e.retryLabel='Retry generation';
     showErrorDialog(e,'Unable to create media plan');
   }
 }
@@ -2739,6 +2782,8 @@ async function regeneratePlan(){
     showAllocationWarnings(S.planDiagnostics);
   }catch(e){
     document.getElementById('navChip').textContent='Regeneration failed';
+    e.retryAction=()=>regeneratePlan();
+    e.retryLabel='Retry regeneration';
     showErrorDialog(e,'Unable to regenerate plan');
   }
 }

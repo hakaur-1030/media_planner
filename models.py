@@ -61,8 +61,8 @@ class MediaPlanRequest(BaseModel):
     countries: list[str] = Field(default_factory=list)
 
     marketplace: Marketplace = "both"
-    marketplace_core_pct: int = 70
-    marketplace_supermall_pct: int = 30
+    marketplace_core_pct: int = 85
+    marketplace_supermall_pct: int = 15
     sub_brands: list[str] = Field(default_factory=list)
 
     start_date: date

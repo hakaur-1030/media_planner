@@ -850,11 +850,11 @@ def _marketplace_splits(req: MediaPlanRequest) -> list[tuple[str, float]]:
         return [("core", 1.0)]
     if req.marketplace == "supermall":
         return [("supermall", 1.0)]
-    core_pct = max(float(getattr(req, "marketplace_core_pct", 70) or 0), 0.0)
-    supermall_pct = max(float(getattr(req, "marketplace_supermall_pct", 30) or 0), 0.0)
+    core_pct = max(float(getattr(req, "marketplace_core_pct", 85) or 0), 0.0)
+    supermall_pct = max(float(getattr(req, "marketplace_supermall_pct", 15) or 0), 0.0)
     total = core_pct + supermall_pct
     if total <= 0:
-        return [("core", 0.7), ("supermall", 0.3)]
+        return [("core", 0.85), ("supermall", 0.15)]
     return [("core", core_pct / total), ("supermall", supermall_pct / total)]
 
 
