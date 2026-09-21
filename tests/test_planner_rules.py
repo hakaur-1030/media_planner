@@ -443,6 +443,48 @@ class PlannerRulesTest(unittest.TestCase):
         self.assertLessEqual(abs(diagnostics["actual_marketplace_budget_split"]["core"] - 70), 1)
         self.assertLessEqual(abs(diagnostics["actual_objective_budget_split"]["reach"] - 60), 1)
 
+    def test_supermall_request_has_two_eligible_slots_in_initial_recommendations(self):
+        req = self.request(objective="both")
+        req.budget = 5_000
+        req.marketplace = "both"
+        req.marketplace_core_pct = 85
+        req.marketplace_supermall_pct = 15
+        historical, meta, inventory = [], {}, []
+        definitions = [
+            *( (f"core_{index}", "core") for index in range(6) ),
+            ("supermall_home", "supermall"),
+            ("supermall_clp", "supermall"),
+        ]
+        for code, marketplace in definitions:
+            historical.append({
+                "country": "ae", "slot_code": code, "views": 1_000_000,
+                "clicks": 10_000, "spends": 10_000, "revenue": 50_000,
+                "active_days": 30, "roas_pagecomcat": 5,
+            })
+            meta[("ae", code)] = {
+                "slot_code": code, "slot_name": code,
+                "page": "Home Page" if "home" in code else "CLP",
+                "category": "Mobiles", "zone": code,
+                "pricing_options": ["CPM"], "cpm_rate": 10,
+                "marketplace": marketplace,
+            }
+            inventory.extend(
+                {"dt": req.start_date + timedelta(days=i), "country": "ae", "slot_code": code, "available_views": 200_000}
+                for i in range(10)
+            )
+
+        suggestions = suggest_slots(req, historical, inventory, meta, self.settings, limit=6)
+
+        self.assertEqual(len(suggestions), 6)
+        self.assertGreaterEqual(sum(slot["marketplace"] == "supermall" for slot in suggestions), 2)
+        req.selected_slot_keys = [slot["slot_key"] for slot in suggestions]
+        req.selected_slot_pricing = {slot["slot_key"]: slot["pricing_model"] for slot in suggestions}
+        rows, _diagnostics = plan_media(req, historical, inventory, meta, self.settings)
+        allocated_supermall = {
+            row.slot_code for row in rows if row.marketplace == "supermall" and float(row.cost or 0) > 0
+        }
+        self.assertGreaterEqual(len(allocated_supermall), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

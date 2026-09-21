@@ -298,6 +298,17 @@ def is_homepage_slot(row: dict, slot_code: str, slot_name: str) -> bool:
     return False
 
 
+def is_supermall_slot(row: dict, slot_code: str, slot_name: str) -> bool:
+    """Classify Supermall directly from the catalogue before eligibility filters."""
+    marketplace = norm(get_first(row, "marketplace", "market_place"))
+    text = f"{slot_code or ''} {slot_name or ''}".lower()
+    return (
+        marketplace in {"supermall", "super_mall", "super-mall", "sm"}
+        or "supermall" in text
+        or "super_mall" in text
+    )
+
+
 def pricing_options_from_values(cpm_value, cpd_value) -> list[str]:
     options = []
     if parse_number(cpm_value) > 0:
@@ -764,7 +775,10 @@ class BigQueryRepository:
                     (country, normalized_slot_code),
                     0,
                 )
-                if booked_views < MIN_RECENT_BOOKED_VIEWS:
+                # Supermall is a smaller inventory pool. Its booking history is
+                # a ranking signal, not an eligibility gate, so sparse history
+                # cannot hide rate-valid, forecast-available placements.
+                if booked_views < MIN_RECENT_BOOKED_VIEWS and not is_supermall_slot(row, slot_code, slot_name):
                     continue
             rate_meta = {}
             # Prefer a country-specific rate card match, including the safe

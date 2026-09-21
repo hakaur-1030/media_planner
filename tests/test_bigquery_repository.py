@@ -46,6 +46,29 @@ class RecentBookingEligibilityTest(unittest.TestCase):
         self.assertIn("`country` IS NOT NULL", sql)
         self.assertIn("TRIM(CAST(`country` AS STRING)) != ''", sql)
 
+    def test_sparse_supermall_booking_history_does_not_remove_rate_valid_catalog_inventory(self):
+        repo = object.__new__(BigQueryRepository)
+        repo.settings = SimpleNamespace(slot_data_table="project.dataset.slots")
+        repo._query_records = Mock(return_value=[
+            {"country": "ae", "slot_code": "core_search", "slot_name": "Core Search", "marketplace": "core", "type": "CPM"},
+            {"country": "ae", "slot_code": "supermall_search", "slot_name": "Supermall Search", "marketplace": "supermall", "type": "CPM"},
+        ])
+        repo._fetch_booked_cpd_slot_keys = Mock(return_value=set())
+        repo._fetch_recent_booked_views = Mock(return_value={})
+        repo._fetch_rate_card_map = Mock(return_value=({
+            ("ae", "core_search"): {"cpm_rate": 10, "pricing_options": ["CPM"]},
+            ("ae", "supermall_search"): {"cpm_rate": 10, "pricing_options": ["CPM"]},
+        }, {}))
+        request = MediaPlanRequest.model_validate({
+            "brand": "Test", "comcats": ["Mobiles"], "countries": ["ae"],
+            "start_date": date(2026, 9, 1), "end_date": date(2026, 9, 2),
+            "budget": 5_000, "currency": "USD", "objective": "reach",
+        })
+
+        catalog = repo.fetch_slot_catalog(request)
+
+        self.assertEqual([item["slot_code"] for item in catalog], ["supermall_search"])
+
 
 class RateCardTest(unittest.TestCase):
     def test_q4_daily_rate_requires_every_service_date(self):

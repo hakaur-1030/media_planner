@@ -1716,6 +1716,59 @@ def _placement_priority(candidate: Candidate) -> float:
     return priority
 
 
+def _prioritize_supermall_recommendations(
+    ordered_slot_keys: list[str],
+    candidates_by_slot: dict[str, list[Candidate]],
+    req: MediaPlanRequest,
+) -> list[str]:
+    """Keep at least two eligible Supermall placements in the initial guidance.
+
+    A non-zero Supermall request must not be represented by a single slot when
+    there are multiple eligible choices.  This is a recommendation safeguard,
+    not a fabricated-inventory rule: Core is left untouched when Supermall is
+    not requested, and no unavailable slot is introduced.
+    """
+    requested_supermall = req.marketplace == "supermall" or (
+        req.marketplace == "both" and float(getattr(req, "marketplace_supermall_pct", 0) or 0) > 0
+    )
+    if not requested_supermall or len(ordered_slot_keys) < 2:
+        return ordered_slot_keys
+
+    def is_supermall_key(value: str) -> bool:
+        options = candidates_by_slot.get(value, [])
+        return bool(options) and options[0].marketplace == "supermall"
+
+    eligible_supermall = [key for key in ordered_slot_keys if is_supermall_key(key)]
+    required_count = min(2, len(eligible_supermall))
+    if required_count < 2:
+        return ordered_slot_keys
+
+    # This mirrors the campaign-wide 6/10 starting guidance.  The full list
+    # remains ranked normally; only its initial recommendation window is
+    # adjusted to make the requested marketplace actually selectable.
+    guidance_count = 6 if float(req.budget or 0) <= 10_000 else 10
+    window_end = min(guidance_count, len(ordered_slot_keys))
+    current_count = sum(1 for key in ordered_slot_keys[:window_end] if is_supermall_key(key))
+    if current_count >= required_count:
+        return ordered_slot_keys
+
+    promoted = [key for key in ordered_slot_keys[window_end:] if is_supermall_key(key)]
+    result = list(ordered_slot_keys)
+    for supermall_key in promoted:
+        if current_count >= required_count:
+            break
+        replacement_index = next(
+            (index for index in range(window_end - 1, -1, -1) if not is_supermall_key(result[index])),
+            None,
+        )
+        if replacement_index is None:
+            break
+        incoming_index = result.index(supermall_key, window_end)
+        result[replacement_index], result[incoming_index] = result[incoming_index], result[replacement_index]
+        current_count += 1
+    return result
+
+
 def suggest_slots(
     req: MediaPlanRequest,
     historical_rows: list[dict],
@@ -1789,6 +1842,10 @@ def suggest_slots(
             keys = country_orders.get(country, [])
             if index < len(keys):
                 ordered_slot_keys.append(keys[index])
+
+    ordered_slot_keys = _prioritize_supermall_recommendations(
+        ordered_slot_keys, candidates_by_slot, req
+    )
 
     for key in ordered_slot_keys:
         candidate = preferred_candidate_for_slot(candidates_by_slot.get(key, []), selected_slot_pricing_map.get(key), req.objective)

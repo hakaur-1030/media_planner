@@ -479,12 +479,7 @@ def slot_preselection(req: MediaPlanRequest, settings: Settings = Depends(get_se
     preview_rows = []
     preview_diagnostics = {}
     starting_count = min(recommendation_starting_count(req), len(suggestion_pool))
-    batch_size = max(len(req.countries), 1) * 2
-    next_candidate_index = starting_count
     suggestions = suggestion_pool[:starting_count]
-    previous_utilization = -1.0
-    preview_attempts = 0
-    max_preview_attempts = 4
     while suggestions:
         preview_req = req.model_copy(deep=True)
         preview_req.selected_slot_keys = [slot["slot_key"] for slot in suggestions]
@@ -496,7 +491,6 @@ def slot_preselection(req: MediaPlanRequest, settings: Settings = Depends(get_se
         # Preview is non-critical. A constrained/partial inventory must still
         # let an operator open preselection and manually choose a placement.
         try:
-            preview_attempts += 1
             preview_rows, preview_diagnostics = plan_media(preview_req, historical_rows, inventory_rows, slot_meta, settings)
         except Exception as exc:
             logger.warning("Slot preselection preview failed; returning recommendations: %s", exc)
@@ -516,20 +510,11 @@ def slot_preselection(req: MediaPlanRequest, settings: Settings = Depends(get_se
             if preview_spend_by_slot.get(slot["slot_key"], 0.0) > 0
         ]
 
-        if (
-            utilization >= 95.0
-            or next_candidate_index >= len(suggestion_pool)
-            or preview_attempts >= max_preview_attempts
-        ):
-            break
-        # The starting count is guidance, not a ceiling.  Add more candidates
-        # only while they create a meaningful improvement in spendability;
-        # otherwise they merely dilute the recommendation list.
-        if previous_utilization >= 0 and utilization - previous_utilization < 0.25:
-            break
-        previous_utilization = utilization
-        suggestions.extend(suggestion_pool[next_candidate_index:next_candidate_index + batch_size])
-        next_candidate_index += batch_size
+        # The 6/10 campaign-wide guidance is a starting selection, not a
+        # minimum.  A preview may remove placements that cannot receive spend,
+        # but it must never append extra placements simply to chase budget
+        # utilisation; that dilutes small campaigns (for example $5k plans).
+        break
     preview_spend_by_slot: dict[str, float] = {}
     for row in preview_rows:
         key = f"{row.country}|{row.slot_code}"

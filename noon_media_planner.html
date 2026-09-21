@@ -1099,6 +1099,25 @@ function apiErrorFromResponse(data,fallback,raw='',response=null){
   return error;
 }
 
+async function fetchPlannerRequest(url,options={}){
+  // A Cloud Run/BQ 503 is commonly transient. Retry it once as a fresh
+  // no-cache request, then return the final response to the existing error
+  // dialog. This deliberately has a fixed bound: a persistent outage never
+  // traps the planner in an automatic retry loop.
+  let lastError;
+  for(let attempt=0;attempt<2;attempt++){
+    try{
+      const response=await fetch(url,{...options,cache:'no-store'});
+      if(response.status!==503 || attempt===1) return response;
+    }catch(error){
+      lastError=error;
+      if(attempt===1) throw error;
+    }
+    await new Promise(resolve=>setTimeout(resolve,700));
+  }
+  throw lastError||new Error('Unable to contact the planning service.');
+}
+
 let errorDialogRetryAction=null;
 
 function showErrorDialog(error,fallback='Unable to complete the request'){
@@ -1528,7 +1547,7 @@ function buildSavedSelectedSlots(saved){
 }
 
 async function fetchSavedPreselection(saved){
-  const response=await fetch('/api/slot-preselection',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(saved.request||{})});
+  const response=await fetchPlannerRequest('/api/slot-preselection',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(saved.request||{})});
   const raw=await response.text();
     const data=raw?(()=>{try{return JSON.parse(raw);}catch(_){return {detail:raw};}})():{};
     if(!response.ok){
@@ -2179,7 +2198,7 @@ async function openPreselection(){
   try{
     const payload=collectPlanningPayload();
     document.getElementById('navChip').textContent='Fetching slot suggestions...';
-    const res=await fetch('/api/slot-preselection',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const res=await fetchPlannerRequest('/api/slot-preselection',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const raw=await res.text();
     const data=raw?(()=>{try{return JSON.parse(raw);}catch(_){return {detail:raw};}})():{};
     if(!res.ok){
@@ -2220,7 +2239,7 @@ function setupDateLimits(){
 
 async function loadOptions(){
   try{
-    const res=await fetch('/api/options');
+    const res=await fetchPlannerRequest('/api/options');
     const raw=await res.text();
     const data=raw?(()=>{try{return JSON.parse(raw);}catch(_){return {detail:raw};}})():{};
     if(!res.ok){
@@ -2405,37 +2424,40 @@ function updatePhName(i,v){
   syncPhaseSplitUi();
 }
 function delPhase(i){ S.phases.splice(i,1); buildCalendar(); }
+function copyPlanningPayload(payload){ return JSON.parse(JSON.stringify(payload)); }
 
-async function buildPlan(){
-  let payload;
-  try{
-    payload=collectPlanningPayload();
-  }catch(e){
-    alert(e.message||'Check inputs before generating the plan.');
-    return;
+async function buildPlan(retryPayload=null){
+  let payload=retryPayload?copyPlanningPayload(retryPayload):null;
+  if(!payload){
+    try{
+      payload=collectPlanningPayload();
+    }catch(e){
+      alert(e.message||'Check inputs before generating the plan.');
+      return;
+    }
+    if(!S.selectedSlots.length){
+      alert('Select at least one slot in slot preselection.');
+      return;
+    }
+    if(S.offdeckBudget>0 && !S.selectedOffdeckSlots.length){
+      alert('Select at least one off-deck slot or set the off-deck budget to 0.');
+      return;
+    }
+    const offdeckSelectedValue=S.selectedOffdeckSlots.reduce((sum,slot)=>sum+Number(slot.value||0),0);
+    if(offdeckSelectedValue>S.offdeckBudget+0.01){
+      alert('Off-deck selected value cannot be above the off-deck budget.');
+      return;
+    }
+    sanitizeOnDeckSelections();
+    payload.selected_slot_keys=S.selectedSlots.map(slot=>slot.slot_key);
+    payload.manual_slot_keys=S.selectedSlots.filter(slot=>slot.manual).map(slot=>slot.slot_key);
+    payload.selected_slot_pricing=Object.fromEntries(S.selectedSlots.map(slot=>[slot.slot_key,normalizePricingModel(slot.pricing_model)]));
+    payload.foc_slot_keys=S.selectedSlots.filter(slot=>slot.foc).map(slot=>slot.slot_key);
+    payload.selected_offdeck_slots=S.selectedOffdeckSlots.map(slot=>({...slot,slot_key:offdeckKey(slot)}));
   }
-  if(!S.selectedSlots.length){
-    alert('Select at least one slot in slot preselection.');
-    return;
-  }
-  if(S.offdeckBudget>0 && !S.selectedOffdeckSlots.length){
-    alert('Select at least one off-deck slot or set the off-deck budget to 0.');
-    return;
-  }
-  const offdeckSelectedValue=S.selectedOffdeckSlots.reduce((sum,slot)=>sum+Number(slot.value||0),0);
-  if(offdeckSelectedValue>S.offdeckBudget+0.01){
-    alert('Off-deck selected value cannot be above the off-deck budget.');
-    return;
-  }
-  sanitizeOnDeckSelections();
-  payload.selected_slot_keys=S.selectedSlots.map(slot=>slot.slot_key);
-  payload.manual_slot_keys=S.selectedSlots.filter(slot=>slot.manual).map(slot=>slot.slot_key);
-  payload.selected_slot_pricing=Object.fromEntries(S.selectedSlots.map(slot=>[slot.slot_key,normalizePricingModel(slot.pricing_model)]));
-  payload.foc_slot_keys=S.selectedSlots.filter(slot=>slot.foc).map(slot=>slot.slot_key);
-  payload.selected_offdeck_slots=S.selectedOffdeckSlots.map(slot=>({...slot,slot_key:offdeckKey(slot)}));
   document.getElementById('navChip').textContent='Generating plan...';
   try{
-    const res=await fetch('/api/media-plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const res=await fetchPlannerRequest('/api/media-plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const raw=await res.text();
     const data=raw?(()=>{try{return JSON.parse(raw);}catch(_){return {detail:raw};}})():{};
     if(!res.ok){
@@ -2457,9 +2479,8 @@ async function buildPlan(){
     showAllocationWarnings(S.planDiagnostics);
   }catch(e){
     document.getElementById('navChip').textContent='Plan failed';
-    // Keep the preselection state and current panel intact. Retrying rebuilds
-    // the request from the same campaign inputs and selected slots.
-    e.retryAction=()=>buildPlan();
+    // Replay this exact request, rather than rebuilding from UI state.
+    e.retryAction=()=>buildPlan(copyPlanningPayload(payload));
     e.retryLabel='Retry generation';
     showErrorDialog(e,'Unable to create media plan');
   }
@@ -2762,14 +2783,18 @@ function serializeRows(){
       locked:!!r.locked
     }));
 }
-async function regeneratePlan(){
-  if(!S.planId){ alert('Generate the first draft before regenerating.'); return; }
-  sanitizeOnDeckSelections();
-  const brands=selectedBrandsForPayload();
-  const payload={ brand:brands[0]||getSelectedBrandName(), brands, brand_budget_splits:collectBrandBudgetSplits(), brand_tag:null, comcats:S.comcats, comcat_budget_splits:collectComcatBudgetSplits(), countries:S.countries, start_date:S.flightStart, end_date:S.flightEnd, total_budget:S.totalBudget, offdeck_budget:S.offdeckBudget, budget:S.budget, discount_pct:S.discountPct, currency:S.currency, objective:S.obj||'both', reach_weight:S.rW, roas_weight:S.oW, phases:S.phases.map(p=>({name:p.name,from:p.from,to:p.to})), phase_budget_splits:collectPhaseBudgetSplits(), plan_id:S.planId, current_rows:serializeRows(), excluded_slot_keys:S.excludedSlotKeys, marketplace:S.marketplace, marketplace_core_pct:S.marketplace==='both'?S.marketplaceCorePct:(S.marketplace==='core'?100:0), marketplace_supermall_pct:S.marketplace==='both'?S.marketplaceSupermallPct:(S.marketplace==='supermall'?100:0), sub_brands:[], le_code:(document.getElementById('leCode').value||'').trim(), notes:(document.getElementById('bNotes')?document.getElementById('bNotes').value:'')||'', budget_locked:!!S.budgetLocked, selected_slot_keys:S.selectedSlots.map(slot=>slot.slot_key), manual_slot_keys:S.selectedSlots.filter(slot=>slot.manual).map(slot=>slot.slot_key), selected_offdeck_slots:S.selectedOffdeckSlots.map(slot=>({...slot,slot_key:offdeckKey(slot)})), selected_slot_pricing:Object.fromEntries(S.selectedSlots.map(slot=>[slot.slot_key,normalizePricingModel(slot.pricing_model)])), foc_slot_keys:S.selectedSlots.filter(slot=>slot.foc).map(slot=>slot.slot_key) };
+async function regeneratePlan(retryPayload=null,retryPlanId=null){
+  const targetPlanId=retryPlanId||S.planId;
+  if(!targetPlanId){ alert('Generate the first draft before regenerating.'); return; }
+  let payload=retryPayload?copyPlanningPayload(retryPayload):null;
+  if(!payload){
+    sanitizeOnDeckSelections();
+    const brands=selectedBrandsForPayload();
+    payload={ brand:brands[0]||getSelectedBrandName(), brands, brand_budget_splits:collectBrandBudgetSplits(), brand_tag:null, comcats:S.comcats, comcat_budget_splits:collectComcatBudgetSplits(), countries:S.countries, start_date:S.flightStart, end_date:S.flightEnd, total_budget:S.totalBudget, offdeck_budget:S.offdeckBudget, budget:S.budget, discount_pct:S.discountPct, currency:S.currency, objective:S.obj||'both', reach_weight:S.rW, roas_weight:S.oW, phases:S.phases.map(p=>({name:p.name,from:p.from,to:p.to})), phase_budget_splits:collectPhaseBudgetSplits(), plan_id:targetPlanId, current_rows:serializeRows(), excluded_slot_keys:S.excludedSlotKeys, marketplace:S.marketplace, marketplace_core_pct:S.marketplace==='both'?S.marketplaceCorePct:(S.marketplace==='core'?100:0), marketplace_supermall_pct:S.marketplace==='both'?S.marketplaceSupermallPct:(S.marketplace==='supermall'?100:0), sub_brands:[], le_code:(document.getElementById('leCode').value||'').trim(), notes:(document.getElementById('bNotes')?document.getElementById('bNotes').value:'')||'', budget_locked:!!S.budgetLocked, selected_slot_keys:S.selectedSlots.map(slot=>slot.slot_key), manual_slot_keys:S.selectedSlots.filter(slot=>slot.manual).map(slot=>slot.slot_key), selected_offdeck_slots:S.selectedOffdeckSlots.map(slot=>({...slot,slot_key:offdeckKey(slot)})), selected_slot_pricing:Object.fromEntries(S.selectedSlots.map(slot=>[slot.slot_key,normalizePricingModel(slot.pricing_model)])), foc_slot_keys:S.selectedSlots.filter(slot=>slot.foc).map(slot=>slot.slot_key) };
+  }
   try{
     document.getElementById('navChip').textContent='Regenerating...';
-    const res=await fetch(`/api/media-plan/${S.planId}/regenerate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const res=await fetchPlannerRequest(`/api/media-plan/${targetPlanId}/regenerate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const raw=await res.text();
     const data=raw?(()=>{try{return JSON.parse(raw);}catch(_){return {detail:raw};}})():{};
     if(!res.ok){ throw apiErrorFromResponse(data,'Unable to regenerate plan',raw,res); }
@@ -2782,7 +2807,7 @@ async function regeneratePlan(){
     showAllocationWarnings(S.planDiagnostics);
   }catch(e){
     document.getElementById('navChip').textContent='Regeneration failed';
-    e.retryAction=()=>regeneratePlan();
+    e.retryAction=()=>regeneratePlan(copyPlanningPayload(payload),targetPlanId);
     e.retryLabel='Retry regeneration';
     showErrorDialog(e,'Unable to regenerate plan');
   }
