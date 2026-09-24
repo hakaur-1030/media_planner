@@ -1454,6 +1454,48 @@ def _coerce_rows(req: MediaPlanRequest) -> list[EditablePlanLine]:
     return coerced
 
 
+def _merge_duplicate_generated_rows(rows: list[EditablePlanLine]) -> list[EditablePlanLine]:
+    """Collapse presentation duplicates introduced by objective rebalancing.
+
+    A balanced plan may transfer part of a CPM line to the other objective.
+    Previously that transfer cloned the same placement for the same date range,
+    so the plan table showed the identical slot twice.  The booking is one
+    placement, not two, so keep one line and retain its total value/views.
+    """
+    merged: list[EditablePlanLine] = []
+    by_key: dict[tuple[object, ...], EditablePlanLine] = {}
+    for row in rows:
+        if row.manual or row.locked or not row.slot_code:
+            merged.append(row)
+            continue
+        key = (
+            row.country,
+            slot_code_key(row.slot_code),
+            row.phase,
+            row.from_date,
+            row.to_date,
+            normalize_pricing_model(row.buyType),
+            row.brand,
+        )
+        existing = by_key.get(key)
+        if existing is None:
+            by_key[key] = row
+            merged.append(row)
+            continue
+        existing_cost = float(existing.cost or existing.net_amount or 0)
+        row_cost = float(row.cost or row.net_amount or 0)
+        # Keep the objective label of the larger contribution; costs and
+        # views remain the complete booking totals on the surviving line.
+        if row_cost > existing_cost:
+            existing.stype = row.stype
+        existing.views = int(existing.views or 0) + int(row.views or 0) if (existing.views is not None or row.views is not None) else None
+        existing.cost = round(existing_cost + row_cost, 2)
+        existing.net_amount = round(float(existing.net_amount or existing_cost) + float(row.net_amount or row_cost), 2)
+        existing.gross_amount = round(float(existing.gross_amount or 0) + float(row.gross_amount or 0), 2)
+        existing.score = max(float(existing.score or 0), float(row.score or 0))
+    return merged
+
+
 def _inventory_by_slot_phase(req: MediaPlanRequest, inventory_rows: list[dict]) -> dict[tuple[str, str, str], int]:
     inventory_by_slot_phase: dict[tuple[str, str, str], int] = defaultdict(int)
     for row in inventory_rows:
@@ -1911,7 +1953,11 @@ def plan_media(
 ) -> tuple[list[EditablePlanLine], dict]:
     base_candidates = build_candidates(historical_rows, slot_meta, settings, req.marketplace)
     selected_slot_pricing_map = selected_slot_pricing(req)
-    selected_slot_key_list = [value for value in req.selected_slot_keys if value]
+    # A browser refresh or an older saved request can submit the same selected
+    # key more than once.  Treat selection as a set while preserving the
+    # operator's first-choice order; otherwise forced representation can add
+    # the same placement twice in one phase.
+    selected_slot_key_list = list(dict.fromkeys(value for value in req.selected_slot_keys if value))
     selected_slot_key_list.sort(
         key=lambda key: (
             0 if selected_slot_pricing_map.get(key) == "CPD" else 1,
@@ -2634,6 +2680,8 @@ def plan_media(
                 rows.append(split_row)
                 paid_rows.append(split_row)
                 deficit = round(deficit - transfer_net, 2)
+
+    rows = _merge_duplicate_generated_rows(rows)
 
     final_selected_keys = {
         selected_key

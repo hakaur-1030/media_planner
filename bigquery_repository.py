@@ -536,10 +536,19 @@ class BigQueryRepository:
                 continue
             dt = parse_date(get_first(row, "date", "dt"))
             if rate_card_mode == "q4" and q4_table:
-                rate = parse_number(get_first(row, "rate", "cost"))
-                pricing_model = normalize_pricing_model(get_first(row, "type"))
-                cpm_rate = rate if pricing_model == "CPM" else 0.0
-                cpd_rate = rate if pricing_model == "CPD" else 0.0
+                # The Q4 card has appeared with both the compact
+                # ``type/rate`` schema and the descriptive pricing-column
+                # names.  Read either form.  If a record stores CPM/CPD in
+                # separate columns, retain those values rather than treating
+                # the row as unpriced merely because ``type`` is blank.
+                pricing_model = normalize_pricing_model(
+                    get_first(row, "type", "pricing_type", "pricing_model", "buy_type", "buy type")
+                )
+                rate = parse_number(get_first(row, "rate", "cost", "price", "amount"))
+                direct_cpm_rate = parse_number(get_first(row, "cpm_rate", "cpm", "cpm price"))
+                direct_cpd_rate = parse_number(get_first(row, "cpd_rate", "cpd", "cpd price"))
+                cpm_rate = direct_cpm_rate or (rate if pricing_model == "CPM" else 0.0)
+                cpd_rate = direct_cpd_rate or (rate if pricing_model == "CPD" else 0.0)
             else:
                 cpm_rate = parse_number(get_first(row, "cpm_rate"))
                 cpd_rate = parse_number(get_first(row, "cpd_rate"))
@@ -807,7 +816,11 @@ class BigQueryRepository:
                 for option in (rate_meta.get("pricing_options") or [])
                 if rate_available_for_window(rate_meta, option, req.start_date, last_service_date)
             ] if req is not None else list(rate_meta.get("pricing_options") or [])
-            has_rate_card = bool(pricing_options)
+            # The generic /api/options catalogue has no flight dates and
+            # therefore no rate-card lookup.  "Unavailable" would be an
+            # incorrect conclusion in that state; only a dated lookup may
+            # mark a slot as having no official rate.
+            has_rate_card = bool(pricing_options) if req is not None else None
             # Commercial plans must never be priced from a synthetic default.
             # Keep unpriced inventory visible only in the unrestricted manual
             # catalogue, where it can be diagnosed rather than booked.
@@ -840,7 +853,16 @@ class BigQueryRepository:
                     "booked_views_last_12_months": booked_views,
                 }
             )
-        return catalog
+        # slot_data can contain repeated catalogue extracts.  Expose one
+        # canonical entry per country/slot so neither the manual picker nor
+        # the editable plan selector displays a placement twice.
+        deduped_catalog: dict[tuple[str, str], dict] = {}
+        for item in catalog:
+            key = (item["country"], slot_code_key(item["slot_code"]))
+            existing = deduped_catalog.get(key)
+            if existing is None or (item.get("rate_available") is True and existing.get("rate_available") is not True):
+                deduped_catalog[key] = item
+        return list(deduped_catalog.values())
 
     def fetch_slot_meta(self, req: MediaPlanRequest | None = None, enforce_eligibility: bool = True) -> dict[tuple[str, str], dict]:
         return {

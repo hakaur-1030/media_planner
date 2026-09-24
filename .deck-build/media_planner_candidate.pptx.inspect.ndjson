@@ -1,0 +1,232 @@
+{"kind":"deck","id":"pr/n07c4q","name":"Deck"}
+{"kind":"layout","layoutId":"ffb4f7bc-b5eb-4b56-b8df-c3c667ad74b1","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"710f8fc2-ef5a-4eb6-bac0-b712e3ebec2c","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/dyd8yh","slide":1,"title":"Media Planner","textShapes":5}
+{"kind":"shape","id":"sh/snmlw3qp","slide":1,"bbox":[0,0,1280,720]}
+{"kind":"shape","id":"sh/7mdk3ip4","slide":1,"bbox":[0,0,22,720]}
+{"kind":"textbox","id":"sh/50v2187e","slide":1,"text":"Media Planner","textPreview":"Media Planner","textChars":13,"textLines":1,"bbox":[70,202,880,70]}
+{"kind":"textbox","id":"sh/kzmls3qt","slide":1,"text":"A governed, data-backed workflow for faster onsite media plans","textPreview":"A governed, data-backed workflow for faster onsite media plans","textChars":62,"textLines":1,"bbox":[74,284,780,50]}
+{"kind":"shape","id":"sh/jydkzyp8","slide":1,"bbox":[72,374,300,4]}
+{"kind":"textbox","id":"sh/ixk3qt8n","slide":1,"text":"Management, Product & Technology Review","textPreview":"Management, Product & Technology Review","textChars":39,"textLines":1,"bbox":[74,415,560,30]}
+{"kind":"textbox","id":"sh/pwfmds7i","slide":1,"text":"September 2026","textPreview":"September 2026","textChars":14,"textLines":1,"bbox":[74,454,300,24]}
+{"kind":"shape","id":"sh/4v6l4n6x","slide":1,"bbox":[912,174,218,218]}
+{"kind":"shape","id":"sh/qt8bqls7","slide":1,"bbox":[975,237,92,92]}
+{"kind":"shape","id":"sh/buhsjqts","slide":1,"bbox":[856,449,305,1]}
+{"kind":"textbox","id":"sh/cvqtsvad","slide":1,"text":"Plan with evidence.\nPrice with the approved card.\nSave every decision.","textPreview":"Plan with evidence. | Price with the approved card. | Save every decision.","textChars":70,"textLines":3,"bbox":[856,486,330,104]}
+{"kind":"image","id":"im/zi9gbmpg","slide":1,"name":"","alt":"noon logo","bbox":[70,70,190,62]}
+{"kind":"notes","id":"nt/dyd8yh","slide":1,"text":"Source: Media Planner repository README.md, main.py, planner.py. Title slide."}
+{"kind":"slide","id":"sl/lnx0e3","slide":2,"title":"The management case","textShapes":21}
+{"kind":"textbox","id":"sh/o32h8nqp","slide":2,"text":"The management case","textPreview":"The management case","textChars":19,"textLines":1,"bbox":[66,42,1100,46]}
+{"kind":"textbox","id":"sh/n2tgzi94","slide":2,"text":"Media Planner converts a fragmented planning exercise into a traceable, repeatable decision flow.","textPreview":"Media Planner converts a fragmented planning exercise into a traceable, repeatable decision flow.","textChars":97,"textLines":1,"bbox":[66,92,1100,27]}
+{"kind":"shape","id":"sh/210f6d8j","slide":2,"bbox":[66,126,1148,3]}
+{"kind":"shape","id":"sh/x8by5s76","slide":2,"bbox":[66,170,340,130]}
+{"kind":"textbox","id":"sh/c72hcnq1","slide":2,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[88,188,62,52]}
+{"kind":"textbox","id":"sh/b6tg3ipg","slide":2,"text":"markets currently supported","textPreview":"markets currently supported","textChars":27,"textLines":1,"bbox":[162,194,220,25]}
+{"kind":"textbox","id":"sh/a5kzad8v","slide":2,"text":"AE, SA and EG","textPreview":"AE, SA and EG","textChars":13,"textLines":1,"bbox":[90,245,290,34]}
+{"kind":"shape","id":"sh/dcryt8r2","slide":2,"bbox":[451,170,340,130]}
+{"kind":"textbox","id":"sh/sbix03qh","slide":2,"text":"7","textPreview":"7","textChars":1,"textLines":1,"bbox":[473,188,62,52]}
+{"kind":"textbox","id":"sh/m58veds7","slide":2,"text":"BigQuery source domains","textPreview":"BigQuery source domains","textChars":23,"textLines":1,"bbox":[547,194,220,25]}
+{"kind":"textbox","id":"sh/n61w7y9s","slide":2,"text":"Rates, inventory, historic delivery, bookings and more","textPreview":"Rates, inventory, historic delivery, bookings and more","textChars":54,"textLines":1,"bbox":[475,245,290,34]}
+{"kind":"shape","id":"sh/o7adg3ad","slide":2,"bbox":[836,170,340,130]}
+{"kind":"textbox","id":"sh/98je98ry","slide":2,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[858,188,62,52]}
+{"kind":"textbox","id":"sh/a9svidsj","slide":2,"text":"persisted outputs","textPreview":"persisted outputs","textChars":17,"textLines":1,"bbox":[932,194,220,25]}
+{"kind":"textbox","id":"sh/ba1wbi9o","slide":2,"text":"Plan run plus line-level plan","textPreview":"Plan run plus line-level plan","textChars":29,"textLines":1,"bbox":[860,245,290,34]}
+{"kind":"shape","id":"sh/wbadkna9","slide":2,"bbox":[66,350,7,43]}
+{"kind":"textbox","id":"sh/xwjedsru","slide":2,"text":"A single planning workspace","textPreview":"A single planning workspace","textChars":27,"textLines":1,"bbox":[86,350,500,23]}
+{"kind":"textbox","id":"sh/yxcvmxsf","slide":2,"text":"Inputs capture brand, category, country, campaign window, budget, marketplace split, phases and objective.","textPreview":"Inputs capture brand, category, country, campaign window, budget, marketplace split, phases and objective.","textChars":106,"textLines":1,"bbox":[86,374,500,35]}
+{"kind":"shape","id":"sh/jylwf290","slide":2,"bbox":[66,435,7,43]}
+{"kind":"textbox","id":"sh/v2lc32p8","slide":2,"text":"Commercial rules stay explicit","textPreview":"Commercial rules stay explicit","textChars":30,"textLines":1,"bbox":[86,435,500,23]}
+{"kind":"textbox","id":"sh/u1cvaxon","slide":2,"text":"Rate-card validation, booking history, availability and allocation limits prevent an attractive plan from becoming an unbookable one.","textPreview":"Rate-card validation, booking history, availability and allocation limits prevent an attractive plan from becoming an unbookable one.","textChars":133,"textLines":1,"bbox":[86,459,500,35]}
+{"kind":"shape","id":"sh/h4nu5s7y","slide":2,"bbox":[660,350,7,43]}
+{"kind":"textbox","id":"sh/g3udc76d","slide":2,"text":"Every plan has a record","textPreview":"Every plan has a record","textChars":23,"textLines":1,"bbox":[680,350,480,23]}
+{"kind":"textbox","id":"sh/7ylczipw","slide":2,"text":"The API saves the request, output, diagnostics and plan code in BigQuery so teams can reload and regenerate the same plan.","textPreview":"The API saves the request, output, diagnostics and plan code in BigQuery so teams can reload and regenerate the same plan.","textChars":122,"textLines":1,"bbox":[680,374,480,35]}
+{"kind":"shape","id":"sh/6dcv6dob","slide":2,"bbox":[660,435,7,43]}
+{"kind":"textbox","id":"sh/t03u1s72","slide":2,"text":"Designed for operator control","textPreview":"Designed for operator control","textChars":29,"textLines":1,"bbox":[680,435,480,23]}
+{"kind":"textbox","id":"sh/8zud8n6h","slide":2,"text":"Planners can inspect recommendations, choose pricing, add approved manual slots and review feasibility notices before finalizing.","textPreview":"Planners can inspect recommendations, choose pricing, add approved manual slots and review feasibility notices before finalizing.","textChars":129,"textLines":1,"bbox":[680,459,480,35]}
+{"kind":"textbox","id":"sh/ja1cvip0","slide":2,"text":"Noon Media Planner  |  Internal presentation","textPreview":"Noon Media Planner  |  Internal presentation","textChars":44,"textLines":1,"bbox":[66,682,400,18]}
+{"kind":"textbox","id":"sh/y9sv2dof","slide":2,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[1160,680,54,18]}
+{"kind":"notes","id":"nt/lnx0e3","slide":2,"text":"Facts: supported countries in main.py; source/output tables in README.md; workflow inputs in models.py."}
+{"kind":"slide","id":"sl/3dp01y","slide":3,"title":"Planner experience: guided choice with human control","textShapes":16}
+{"kind":"textbox","id":"sh/loru9wve","slide":3,"text":"Planner experience: guided choice with human control","textPreview":"Planner experience: guided choice with human control","textChars":52,"textLines":1,"bbox":[66,42,1100,46]}
+{"kind":"textbox","id":"sh/e10behw3","slide":3,"text":"The product keeps the planner in the decision loop while automating evidence gathering and allocation.","textPreview":"The product keeps the planner in the decision loop while automating evidence gathering and allocation.","textChars":102,"textLines":1,"bbox":[66,92,1100,27]}
+{"kind":"shape","id":"sh/z29c7mdo","slide":3,"bbox":[66,126,1148,3]}
+{"kind":"shape","id":"sh/czitc7ex","slide":3,"bbox":[66,205,190,190]}
+{"kind":"textbox","id":"sh/d0ru5cvi","slide":3,"text":"1. Define campaign","textPreview":"1. Define campaign","textChars":18,"textLines":1,"bbox":[82,218,158,26]}
+{"kind":"textbox","id":"sh/qxgbahwr","slide":3,"text":"Brand, comcat, markets, dates, net budget, objective and splits","textPreview":"Brand, comcat, markets, dates, net budget, objective and splits","textChars":63,"textLines":1,"bbox":[82,248,158,137]}
+{"kind":"shape","id":"sh/ry9c32dc","slide":3,"bbox":[296,205,190,190]}
+{"kind":"textbox","id":"sh/wv2d8be1","slide":3,"text":"2. Review shortlist","textPreview":"2. Review shortlist","textChars":19,"textLines":1,"bbox":[312,218,158,26]}
+{"kind":"textbox","id":"sh/xwbuhgvm","slide":3,"text":"Eligible slots show pricing options, predicted performance, availability and rationale","textPreview":"Eligible slots show pricing options, predicted performance, availability and rationale","textChars":86,"textLines":1,"bbox":[312,248,158,137]}
+{"kind":"shape","id":"sh/54n258zy","slide":3,"bbox":[526,205,190,190]}
+{"kind":"textbox","id":"sh/43elw3yd","slide":3,"text":"3. Build plan","textPreview":"3. Build plan","textChars":13,"textLines":1,"bbox":[542,218,158,26]}
+{"kind":"textbox","id":"sh/325k3yhs","slide":3,"text":"Planner selects slots or adds an approved manual placement; engine allocates by phase","textPreview":"Planner selects slots or adds an approved manual placement; engine allocates by phase","textChars":85,"textLines":1,"bbox":[542,248,158,137]}
+{"kind":"shape","id":"sh/i1c3utgn","slide":3,"bbox":[756,205,190,190]}
+{"kind":"textbox","id":"sh/h0321oz2","slide":3,"text":"4. Inspect outcome","textPreview":"4. Inspect outcome","textChars":18,"textLines":1,"bbox":[772,218,158,26]}
+{"kind":"textbox","id":"sh/gzulsjyh","slide":3,"text":"Plan shows spend, views, expected CTR/RoAS, confidence and split feasibility","textPreview":"Plan shows spend, views, expected CTR/RoAS, confidence and split feasibility","textChars":76,"textLines":1,"bbox":[772,248,158,137]}
+{"kind":"shape","id":"sh/vylkzyhw","slide":3,"bbox":[986,205,190,190]}
+{"kind":"textbox","id":"sh/uxc3qt0b","slide":3,"text":"5. Save or regenerate","textPreview":"5. Save or regenerate","textChars":21,"textLines":1,"bbox":[1002,218,158,26]}
+{"kind":"textbox","id":"sh/1w7mdsz6","slide":3,"text":"BigQuery-backed plan code supports reload, exclusions and replacement suggestions","textPreview":"BigQuery-backed plan code supports reload, exclusions and replacement suggestions","textChars":81,"textLines":1,"bbox":[1002,248,158,137]}
+{"kind":"shape","id":"sh/0vyl4nyl","slide":3,"bbox":[0,0,0,0]}
+{"kind":"shape","id":"sh/kz650r6x","slide":3,"bbox":[0,0,0,0]}
+{"kind":"shape","id":"sh/l0fm9w7i","slide":3,"bbox":[0,0,0,0]}
+{"kind":"shape","id":"sh/yx4ny1or","slide":3,"bbox":[0,0,0,0]}
+{"kind":"textbox","id":"sh/zyx47mpc","slide":3,"text":"Key product principle","textPreview":"Key product principle","textChars":21,"textLines":1,"bbox":[66,470,220,25]}
+{"kind":"textbox","id":"sh/cbm5wr6l","slide":3,"text":"Recommendations are a starting point, not a black box. The planner can review the evidence and make controlled exceptions.","textPreview":"Recommendations are a starting point, not a black box. The planner can review the evidence and make controlled exceptions.","textChars":122,"textLines":1,"bbox":[66,505,960,48]}
+{"kind":"textbox","id":"sh/xcvm5w76","slide":3,"text":"Noon Media Planner  |  Internal presentation","textPreview":"Noon Media Planner  |  Internal presentation","textChars":44,"textLines":1,"bbox":[66,682,400,18]}
+{"kind":"textbox","id":"sh/a94nuhov","slide":3,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[1160,680,54,18]}
+{"kind":"notes","id":"nt/3dp01y","slide":3,"text":"Source: main.py endpoints /api/slot-preselection, /api/media-plan and regenerate; planner.py manual slot and diagnostic logic."}
+{"kind":"slide","id":"sl/uqzosz","slide":4,"title":"Architecture: a focused API layer between planners and governed data","textShapes":14}
+{"kind":"textbox","id":"sh/qxwfetoz","slide":4,"text":"Architecture: a focused API layer between planners and governed data","textPreview":"Architecture: a focused API layer between planners and governed data","textChars":68,"textLines":1,"bbox":[66,42,1100,46]}
+{"kind":"textbox","id":"sh/dk7ypo7a","slide":4,"text":"Cloud Run hosts the FastAPI service. BigQuery provides both planning inputs and saved-plan persistence.","textPreview":"Cloud Run hosts the FastAPI service. BigQuery provides both planning inputs and saved-plan persistence.","textChars":103,"textLines":1,"bbox":[66,92,1100,27]}
+{"kind":"shape","id":"sh/czyxgj6p","slide":4,"bbox":[66,126,1148,3]}
+{"kind":"shape","id":"sh/zmpgrypg","slide":4,"bbox":[66,220,245,150]}
+{"kind":"textbox","id":"sh/elgfitov","slide":4,"text":"Web planner","textPreview":"Web planner","textChars":11,"textLines":1,"bbox":[82,233,213,26]}
+{"kind":"textbox","id":"sh/1o7yt87m","slide":4,"text":"Single-page HTML experience\nRequests and plan review","textPreview":"Single-page HTML experience | Requests and plan review","textChars":52,"textLines":2,"bbox":[82,263,213,97]}
+{"kind":"shape","id":"sh/0nyxk361","slide":4,"bbox":[430,190,315,210]}
+{"kind":"textbox","id":"sh/fqlwfupc","slide":4,"text":"FastAPI orchestration","textPreview":"FastAPI orchestration","textChars":21,"textLines":1,"bbox":[446,203,283,26]}
+{"kind":"textbox","id":"sh/upcf698r","slide":4,"text":"Validation, error handling, FX cache, planning endpoints and response summaries","textPreview":"Validation, error handling, FX cache, planning endpoints and response summaries","textChars":79,"textLines":1,"bbox":[446,233,283,157]}
+{"kind":"shape","id":"sh/4fix07at","slide":4,"bbox":[875,220,280,150]}
+{"kind":"textbox","id":"sh/50ry9sbe","slide":4,"text":"BigQuery repository","textPreview":"BigQuery repository","textChars":19,"textLines":1,"bbox":[891,233,248,26]}
+{"kind":"textbox","id":"sh/id0fyxsn","slide":4,"text":"Reads planning data and writes runs / line items through Application Default Credentials","textPreview":"Reads planning data and writes runs / line items through Application Default Credentials","textChars":88,"textLines":1,"bbox":[891,263,248,97]}
+{"kind":"shape","id":"sh/je9g72t8","slide":4,"bbox":[0,0,0,0]}
+{"kind":"shape","id":"sh/s32x47ap","slide":4,"bbox":[0,0,0,0]}
+{"kind":"shape","id":"sh/t4bydcba","slide":4,"bbox":[430,445,315,118]}
+{"kind":"textbox","id":"sh/610f2xsz","slide":4,"text":"Planning services","textPreview":"Planning services","textChars":17,"textLines":1,"bbox":[451,461,240,22]}
+{"kind":"textbox","id":"sh/r2tgb2t4","slide":4,"text":"Eligibility + recommendations\nDeterministic allocation\nRate-window line splitting\nDiagnostics and plan summary","textPreview":"Eligibility + recommendations | Deterministic allocation | Rate-window line splitting | Diagnostics and plan summary","textChars":110,"textLines":4,"bbox":[451,491,260,65]}
+{"kind":"shape","id":"sh/87yxsnal","slide":4,"bbox":[875,445,280,118]}
+{"kind":"textbox","id":"sh/987e18b6","slide":4,"text":"Deployment boundary","textPreview":"Deployment boundary","textChars":19,"textLines":1,"bbox":[896,461,220,22]}
+{"kind":"textbox","id":"sh/psfm9kzi","slide":4,"text":"Cloud Run: europe-west1\nRuntime service account\nBigQuery billing/query project","textPreview":"Cloud Run: europe-west1 | Runtime service account | BigQuery billing/query project","textChars":78,"textLines":3,"bbox":[896,491,230,60]}
+{"kind":"textbox","id":"sh/or6lgfid","slide":4,"text":"Noon Media Planner  |  Internal presentation","textPreview":"Noon Media Planner  |  Internal presentation","textChars":44,"textLines":1,"bbox":[66,682,400,18]}
+{"kind":"textbox","id":"sh/nqx47ahs","slide":4,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[1160,680,54,18]}
+{"kind":"notes","id":"nt/uqzosz","slide":4,"text":"Source: README.md cloud setup and data flow; main.py; bigquery_repository.py; cloudbuild.yaml; Dockerfile."}
+{"kind":"slide","id":"sl/5eou2o","slide":5,"title":"Data foundation: each decision links to a governed source","textShapes":6}
+{"kind":"textbox","id":"sh/h4vidg3y","slide":5,"text":"Data foundation: each decision links to a governed source","textPreview":"Data foundation: each decision links to a governed source","textChars":57,"textLines":1,"bbox":[66,42,1100,46]}
+{"kind":"textbox","id":"sh/uhkz21k7","slide":5,"text":"The repository resolves data into an eligible slot catalogue, historical performance pool and time-bounded inventory.","textPreview":"The repository resolves data into an eligible slot catalogue, historical performance pool and time-bounded inventory.","textChars":117,"textLines":1,"bbox":[66,92,1100,27]}
+{"kind":"shape","id":"sh/f2d0b6ls","slide":5,"bbox":[66,126,1148,3]}
+{"kind":"textbox","id":"sh/p8vihg3u","slide":5,"text":"Why this matters","textPreview":"Why this matters","textChars":16,"textLines":1,"bbox":[66,540,175,24]}
+{"kind":"textbox","id":"sh/254z61kj","slide":5,"text":"The planner does not fabricate commercial inputs. A plan can only use an approved price, eligible inventory and a valid service-date window.","textPreview":"The planner does not fabricate commercial inputs. A plan can only use an approved price, eligible inventory and a valid service-date window.","textChars":140,"textLines":1,"bbox":[66,573,1040,35]}
+{"kind":"textbox","id":"sh/36d0f6l4","slide":5,"text":"Noon Media Planner  |  Internal presentation","textPreview":"Noon Media Planner  |  Internal presentation","textChars":44,"textLines":1,"bbox":[66,682,400,18]}
+{"kind":"textbox","id":"sh/cb6hcv2l","slide":5,"text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[1160,680,54,18]}
+{"kind":"table","id":"tb/dwvydwz6","slide":5,"name":"","rows":6,"cols":3,"preview":"Domain | Planning use | Representative source","bbox":[66,174,1148,320]}
+{"kind":"notes","id":"nt/5eou2o","slide":5,"text":"Source: README.md Data flow; BigQueryRepository.fetch_slot_catalog, fetch_historical_performance and fetch_inventory."}
+{"kind":"slide","id":"sl/d5kx30","slide":6,"title":"Recommendation logic: filter for feasibility, then rank for fit","textShapes":14}
+{"kind":"textbox","id":"sh/jy5kz61w","slide":6,"text":"Recommendation logic: filter for feasibility, then rank for fit","textPreview":"Recommendation logic: filter for feasibility, then rank for fit","textChars":63,"textLines":1,"bbox":[66,42,1100,46]}
+{"kind":"textbox","id":"sh/kzyl8bih","slide":6,"text":"The engine narrows inventory before prioritising placements that match the campaign objective and commercial context.","textPreview":"The engine narrows inventory before prioritising placements that match the campaign objective and commercial context.","textChars":117,"textLines":1,"bbox":[66,92,1100,27]}
+{"kind":"shape","id":"sh/50721gjm","slide":6,"bbox":[66,126,1148,3]}
+{"kind":"shape","id":"sh/atw321kz","slide":6,"bbox":[66,210,230,170]}
+{"kind":"textbox","id":"sh/vu5kvm1k","slide":6,"text":"Candidate pool","textPreview":"Candidate pool","textChars":14,"textLines":1,"bbox":[82,223,198,26]}
+{"kind":"textbox","id":"sh/wvel4r25","slide":6,"text":"Slot catalogue and historical delivery joined by country / slot","textPreview":"Slot catalogue and historical delivery joined by country / slot","textChars":63,"textLines":1,"bbox":[82,253,198,117]}
+{"kind":"shape","id":"sh/xwn2xwjq","slide":6,"bbox":[356,210,230,170]}
+{"kind":"textbox","id":"sh/m5cjyhk3","slide":6,"text":"Eligibility gates","textPreview":"Eligibility gates","textChars":17,"textLines":1,"bbox":[372,223,198,26]}
+{"kind":"textbox","id":"sh/n6lkrm1o","slide":6,"text":"Forecast availability, rate validity, booking history, country, marketplace and comcat relevance","textPreview":"Forecast availability, rate validity, booking history, country, marketplace and comcat relevance","textChars":96,"textLines":1,"bbox":[372,253,198,117]}
+{"kind":"shape","id":"sh/7e903y9g","slide":6,"bbox":[646,210,230,170]}
+{"kind":"textbox","id":"sh/md0jatsv","slide":6,"text":"Performance signals","textPreview":"Performance signals","textChars":19,"textLines":1,"bbox":[662,223,198,26]}
+{"kind":"textbox","id":"sh/90ri5orm","slide":6,"text":"Visibility, CTR, RoAS, brand affinity, comcat relevance, trend and confidence","textPreview":"Visibility, CTR, RoAS, brand affinity, comcat relevance, trend and confidence","textChars":77,"textLines":1,"bbox":[662,253,198,117]}
+{"kind":"shape","id":"sh/8fi1c3a1","slide":6,"bbox":[936,210,230,170]}
+{"kind":"textbox","id":"sh/v2907y9c","slide":6,"text":"Shortlist order","textPreview":"Shortlist order","textChars":15,"textLines":1,"bbox":[952,223,198,26]}
+{"kind":"textbox","id":"sh/u10jetsr","slide":6,"text":"Objective-aware diversity across page families and marketplace shares","textPreview":"Objective-aware diversity across page families and marketplace shares","textChars":69,"textLines":1,"bbox":[952,253,198,117]}
+{"kind":"shape","id":"sh/h4bi98ri","slide":6,"bbox":[0,0,0,0]}
+{"kind":"shape","id":"sh/w321g3ax","slide":6,"bbox":[0,0,0,0]}
+{"kind":"shape","id":"sh/b6p0ve98","slide":6,"bbox":[0,0,0,0]}
+{"kind":"textbox","id":"sh/a5gz29sn","slide":6,"text":"Confidence handling","textPreview":"Confidence handling","textChars":19,"textLines":1,"bbox":[66,475,188,22]}
+{"kind":"textbox","id":"sh/edovq1gn","slide":6,"text":"Sparse but rate-valid Supermall placements remain discoverable with lower confidence rather than disappearing from the eligible set.","textPreview":"Sparse but rate-valid Supermall placements remain discoverable with lower confidence rather than disappearing from the eligible set.","textChars":132,"textLines":1,"bbox":[66,510,980,40]}
+{"kind":"textbox","id":"sh/zexcz6xs","slide":6,"text":"Noon Media Planner  |  Internal presentation","textPreview":"Noon Media Planner  |  Internal presentation","textChars":44,"textLines":1,"bbox":[66,682,400,18]}
+{"kind":"textbox","id":"sh/0fqdsbyd","slide":6,"text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[1160,680,54,18]}
+{"kind":"notes","id":"nt/d5kx30","slide":6,"text":"Source: planner.py build_candidates / suggest_slots; BigQueryRepository.fetch_slot_catalog; tests/test_planner_rules.py Supermall eligibility test."}
+{"kind":"slide","id":"sl/5tvg0n","slide":7,"title":"Allocation logic: spend the budget inside a clear set of guardrails","textShapes":6}
+{"kind":"textbox","id":"sh/yd8bmxk3","slide":7,"text":"Allocation logic: spend the budget inside a clear set of guardrails","textPreview":"Allocation logic: spend the budget inside a clear set of guardrails","textChars":67,"textLines":1,"bbox":[66,42,1100,46]}
+{"kind":"textbox","id":"sh/lgzuxc3u","slide":7,"text":"The live V1 engine is deterministic and rule-based. It creates editable lines, then reports when the requested split is infeasible.","textPreview":"The live V1 engine is deterministic and rule-based. It creates editable lines, then reports when the requested split is infeasible.","textChars":131,"textLines":1,"bbox":[66,92,1100,27]}
+{"kind":"shape","id":"sh/kfqto729","slide":7,"bbox":[66,126,1148,3]}
+{"kind":"textbox","id":"sh/a9obidk7","slide":7,"text":"Management implication","textPreview":"Management implication","textChars":22,"textLines":1,"bbox":[66,558,210,23]}
+{"kind":"textbox","id":"sh/xczuts3i","slide":7,"text":"The product treats a constrained plan as an informed draft with an explanation, rather than a silent failure or false precision.","textPreview":"The product treats a constrained plan as an informed draft with an explanation, rather than a silent failure or false precision.","textChars":128,"textLines":1,"bbox":[66,591,1030,36]}
+{"kind":"textbox","id":"sh/cb6tkn2x","slide":7,"text":"Noon Media Planner  |  Internal presentation","textPreview":"Noon Media Planner  |  Internal presentation","textChars":44,"textLines":1,"bbox":[66,682,400,18]}
+{"kind":"textbox","id":"sh/nmxsnilg","slide":7,"text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[1160,680,54,18]}
+{"kind":"table","id":"tb/idwbad0b","slide":7,"name":"","rows":6,"cols":3,"preview":"Control | How the engine applies it | Operator outcome","bbox":[66,165,1148,347]}
+{"kind":"notes","id":"nt/5tvg0n","slide":7,"text":"Source: planner.py maximum_slot_budget, plan_media and diagnostics; main.py split deviation notices."}
+{"kind":"slide","id":"sl/3ss22t","slide":8,"title":"Pricing and date controls protect commercial accuracy","textShapes":12}
+{"kind":"textbox","id":"sh/to3a58ru","slide":8,"text":"Pricing and date controls protect commercial accuracy","textPreview":"Pricing and date controls protect commercial accuracy","textChars":53,"textLines":1,"bbox":[66,42,1100,46]}
+{"kind":"textbox","id":"sh/6lcbad83","slide":8,"text":"The planner calculates a plan over 09:00-to-09:00 service windows and validates prices against the applicable rate card.","textPreview":"The planner calculates a plan over 09:00-to-09:00 service windows and validates prices against the applicable rate card.","textChars":120,"textLines":1,"bbox":[66,92,1100,27]}
+{"kind":"shape","id":"sh/7mls3i9o","slide":8,"bbox":[66,126,1148,3]}
+{"kind":"shape","id":"sh/kjat83qx","slide":8,"bbox":[66,205,275,165]}
+{"kind":"textbox","id":"sh/lk3a18ri","slide":8,"text":"Campaign / phase dates","textPreview":"Campaign / phase dates","textChars":22,"textLines":1,"bbox":[82,218,243,26]}
+{"kind":"textbox","id":"sh/yhsr6t87","slide":8,"text":"The end date is a closing boundary. Adjacent phases may touch at the same 09:00 boundary.","textPreview":"The end date is a closing boundary. Adjacent phases may touch at the same 09:00 boundary.","textChars":89,"textLines":1,"bbox":[82,248,243,112]}
+{"kind":"shape","id":"sh/ji1szy9s","slide":8,"bbox":[475,205,305,165]}
+{"kind":"textbox","id":"sh/4fetk7qh","slide":8,"text":"Rate-window validation","textPreview":"Rate-window validation","textChars":22,"textLines":1,"bbox":[491,218,273,26]}
+{"kind":"textbox","id":"sh/5gnadsr2","slide":8,"text":"A booked slot needs an approved CPM or CPD rate for its service period. Q4 daily cards require every applicable date.","textPreview":"A booked slot needs an approved CPM or CPD rate for its service period. Q4 daily cards require every applicable date.","textChars":117,"textLines":1,"bbox":[491,248,273,112]}
+{"kind":"shape","id":"sh/pwn65wb2","slide":8,"bbox":[914,205,240,165]}
+{"kind":"textbox","id":"sh/ove5crah","slide":8,"text":"Line construction","textPreview":"Line construction","textChars":17,"textLines":1,"bbox":[930,218,208,26]}
+{"kind":"textbox","id":"sh/nu543mtw","slide":8,"text":"The engine splits a line at a price change, preserving view and amount totals across the split.","textPreview":"The engine splits a line at a price change, preserving view and amount totals across the split.","textChars":95,"textLines":1,"bbox":[930,248,208,112]}
+{"kind":"shape","id":"sh/2twnahsb","slide":8,"bbox":[0,0,0,0]}
+{"kind":"shape","id":"sh/1snm1cbq","slide":8,"bbox":[0,0,0,0]}
+{"kind":"shape","id":"sh/0re587a5","slide":8,"bbox":[66,450,1090,102]}
+{"kind":"textbox","id":"sh/fq54z2tk","slide":8,"text":"Commercial safeguards in the eligible catalogue","textPreview":"Commercial safeguards in the eligible catalogue","textChars":47,"textLines":1,"bbox":[88,468,440,22]}
+{"kind":"textbox","id":"sh/e5cn6xsf","slide":8,"text":"Unpriced inventory cannot become a commercial recommendation. Homepage CPD is gated below a USD 15,000 on-deck budget, while a planner’s manual selection remains visible as a controlled exception.","textPreview":"Unpriced inventory cannot become a commercial recommendation. Homepage CPD is gated below a USD 15,000 on-deck budget, while a planner’s ...","textChars":196,"textLines":1,"bbox":[88,499,1010,35]}
+{"kind":"textbox","id":"sh/lo76dgba","slide":8,"text":"Noon Media Planner  |  Internal presentation","textPreview":"Noon Media Planner  |  Internal presentation","textChars":44,"textLines":1,"bbox":[66,682,400,18]}
+{"kind":"textbox","id":"sh/kny5kbap","slide":8,"text":"08","textPreview":"08","textChars":2,"textLines":1,"bbox":[1160,680,54,18]}
+{"kind":"notes","id":"nt/3ss22t","slide":8,"text":"Source: models.py phase validation; planner.py rate availability and split_rows_at_rate_changes; BigQueryRepository.fetch_slot_catalog; tests/test_planner_rules.py."}
+{"kind":"slide","id":"sl/ls570c","slide":9,"title":"Saved plans support traceability, iteration and operational handoff","textShapes":17}
+{"kind":"textbox","id":"sh/y1w7yloj","slide":9,"text":"Saved plans support traceability, iteration and operational handoff","textPreview":"Saved plans support traceability, iteration and operational handoff","textChars":67,"textLines":1,"bbox":[66,42,1100,46]}
+{"kind":"textbox","id":"sh/l476t07u","slide":9,"text":"Persisted plan codes make a generated plan an auditable business object rather than a transient calculation.","textPreview":"Persisted plan codes make a generated plan an auditable business object rather than a transient calculation.","textChars":108,"textLines":1,"bbox":[66,92,1100,27]}
+{"kind":"shape","id":"sh/k3yp0v6p","slide":9,"bbox":[66,126,1148,3]}
+{"kind":"shape","id":"sh/by5onqps","slide":9,"bbox":[66,210,290,160]}
+{"kind":"textbox","id":"sh/axw7ul87","slide":9,"text":"Save","textPreview":"Save","textChars":4,"textLines":1,"bbox":[82,223,258,26]}
+{"kind":"textbox","id":"sh/x0n6p07y","slide":9,"text":"API writes the request context, summary and diagnostics to media_plan_runs; line items go to media_plan_lines.","textPreview":"API writes the request context, summary and diagnostics to media_plan_runs; line items go to media_plan_lines.","textChars":110,"textLines":1,"bbox":[82,253,258,107]}
+{"kind":"shape","id":"sh/wzepwv6d","slide":9,"bbox":[494,210,290,160]}
+{"kind":"textbox","id":"sh/naloj6pw","slide":9,"text":"Reload","textPreview":"Reload","textChars":6,"textLines":1,"bbox":[510,223,258,26]}
+{"kind":"textbox","id":"sh/m9cnq18b","slide":9,"text":"A plan code retrieves the stored record and displays the original plan through the hosted app URL.","textPreview":"A plan code retrieves the stored record and displays the original plan through the hosted app URL.","textChars":98,"textLines":1,"bbox":[510,253,258,107]}
+{"kind":"shape","id":"sh/wv6907et","slide":9,"bbox":[922,210,290,160]}
+{"kind":"textbox","id":"sh/xgfq9sfe","slide":9,"text":"Regenerate","textPreview":"Regenerate","textChars":10,"textLines":1,"bbox":[938,223,258,26]}
+{"kind":"textbox","id":"sh/atoryxwn","slide":9,"text":"The planner can exclude slots. The service retains valid choices and adds replacements from a refreshed recommendation pool.","textPreview":"The planner can exclude slots. The service retains valid choices and adds replacements from a refreshed recommendation pool.","textChars":124,"textLines":1,"bbox":[938,253,258,107]}
+{"kind":"shape","id":"sh/bux872x8","slide":9,"bbox":[0,0,0,0]}
+{"kind":"shape","id":"sh/or69wneh","slide":9,"bbox":[0,0,0,0]}
+{"kind":"textbox","id":"sh/9sfq5sf2","slide":9,"text":"What teams can rely on","textPreview":"What teams can rely on","textChars":22,"textLines":1,"bbox":[66,455,250,24]}
+{"kind":"shape","id":"sh/mp47udwr","slide":9,"bbox":[66,500,7,43]}
+{"kind":"textbox","id":"sh/nqd83ixc","slide":9,"text":"Business continuity","textPreview":"Business continuity","textChars":19,"textLines":1,"bbox":[86,500,320,23]}
+{"kind":"textbox","id":"sh/8nq98re1","slide":9,"text":"A saved plan can be reopened without depending on a planner’s local session.","textPreview":"A saved plan can be reopened without depending on a planner’s local session.","textChars":76,"textLines":1,"bbox":[86,524,320,35]}
+{"kind":"shape","id":"sh/tozqhcfm","slide":9,"bbox":[462,500,7,43]}
+{"kind":"textbox","id":"sh/h4vqlc7q","slide":9,"text":"Engineering observability","textPreview":"Engineering observability","textChars":25,"textLines":1,"bbox":[482,500,320,23]}
+{"kind":"textbox","id":"sh/g3m9s765","slide":9,"text":"Error responses distinguish input, BigQuery access and unexpected application failures with a reference code.","textPreview":"Error responses distinguish input, BigQuery access and unexpected application failures with a reference code.","textChars":109,"textLines":1,"bbox":[482,524,320,35]}
+{"kind":"shape","id":"sh/f2d8j2pk","slide":9,"bbox":[858,500,7,43]}
+{"kind":"textbox","id":"sh/u14rqhoz","slide":9,"text":"Product learning","textPreview":"Product learning","textChars":16,"textLines":1,"bbox":[878,500,320,23]}
+{"kind":"textbox","id":"sh/t0vqhc7e","slide":9,"text":"Stored diagnostics reveal where demand, rate cards or constraints prevent the desired plan mix.","textPreview":"Stored diagnostics reveal where demand, rate cards or constraints prevent the desired plan mix.","textChars":95,"textLines":1,"bbox":[878,524,320,35]}
+{"kind":"textbox","id":"sh/sfmpo76t","slide":9,"text":"Noon Media Planner  |  Internal presentation","textPreview":"Noon Media Planner  |  Internal presentation","textChars":44,"textLines":1,"bbox":[66,682,400,18]}
+{"kind":"textbox","id":"sh/7ed8f2po","slide":9,"text":"09","textPreview":"09","textChars":2,"textLines":1,"bbox":[1160,680,54,18]}
+{"kind":"notes","id":"nt/ls570c","slide":9,"text":"Source: README.md notes; main.py build_response, regenerate_media_plan and exception handlers; BigQueryRepository.save_plan / get_saved_plan."}
+{"kind":"slide","id":"sl/50vdal","slide":10,"title":"Operating model: clear data, platform and product responsibilities","textShapes":6}
+{"kind":"textbox","id":"sh/sf290bet","slide":10,"text":"Operating model: clear data, platform and product responsibilities","textPreview":"Operating model: clear data, platform and product responsibilities","textChars":66,"textLines":1,"bbox":[66,42,1100,46]}
+{"kind":"textbox","id":"sh/7et876xo","slide":10,"text":"The solution has a lightweight runtime footprint, while quality depends on well-maintained commercial data and explicit ownership.","textPreview":"The solution has a lightweight runtime footprint, while quality depends on well-maintained commercial data and explicit ownership.","textChars":130,"textLines":1,"bbox":[66,92,1100,27]}
+{"kind":"shape","id":"sh/6d0ry1w3","slide":10,"bbox":[66,126,1148,3]}
+{"kind":"textbox","id":"sh/kri9wrex","slide":10,"text":"Risk to manage","textPreview":"Risk to manage","textChars":14,"textLines":1,"bbox":[66,548,150,22]}
+{"kind":"textbox","id":"sh/jq9836xc","slide":10,"text":"The planner can only be as current as the rate card, forecast and booking data. Ownership and freshness checks should sit alongside feature rollout.","textPreview":"The planner can only be as current as the rate card, forecast and booking data. Ownership and freshness checks should sit alongside featu...","textChars":148,"textLines":1,"bbox":[66,580,1075,38]}
+{"kind":"textbox","id":"sh/ip07u1wr","slide":10,"text":"Noon Media Planner  |  Internal presentation","textPreview":"Noon Media Planner  |  Internal presentation","textChars":44,"textLines":1,"bbox":[66,682,400,18]}
+{"kind":"textbox","id":"sh/xorq1wf6","slide":10,"text":"10","textPreview":"10","textChars":2,"textLines":1,"bbox":[1160,680,54,18]}
+{"kind":"table","id":"tb/4r21of6p","slide":10,"name":"","rows":6,"cols":3,"preview":"Area | Current control | Recommended accountable team","bbox":[66,170,1148,335]}
+{"kind":"notes","id":"nt/50vdal","slide":10,"text":"Source: README.md Cloud Run target setup / required GCP setup; cloudbuild.yaml, Dockerfile; tests folder."}
+{"kind":"slide","id":"sl/pfwt56","slide":11,"title":"Maturity path: scale confidence before expanding optimisation scope","textShapes":12}
+{"kind":"textbox","id":"sh/4v6lw32d","slide":11,"text":"Maturity path: scale confidence before expanding optimisation scope","textPreview":"Maturity path: scale confidence before expanding optimisation scope","textChars":67,"textLines":1,"bbox":[66,42,1100,46]}
+{"kind":"textbox","id":"sh/juxk3yls","slide":11,"text":"The live V1 engine remains the production path. V2 is an isolated prototype and should enter production only after rule-parity validation.","textPreview":"The live V1 engine remains the production path. V2 is an isolated prototype and should enter production only after rule-parity validation.","textChars":138,"textLines":1,"bbox":[66,92,1100,27]}
+{"kind":"shape","id":"sh/ito3utk7","slide":11,"bbox":[66,126,1148,3]}
+{"kind":"shape","id":"sh/tkz298ju","slide":11,"bbox":[66,206,330,260]}
+{"kind":"textbox","id":"sh/sjql0n29","slide":11,"text":"Now: production core","textPreview":"Now: production core","textChars":20,"textLines":1,"bbox":[90,230,285,46]}
+{"kind":"textbox","id":"sh/ryhk7i1o","slide":11,"text":"V1 enforces requested splits, rate cards, budget rules and transparent diagnostics.\n\nFocus: adoption, data freshness and operator feedback.","textPreview":"V1 enforces requested splits, rate cards, budget rules and transparent diagnostics. |  | Focus: adoption, data freshness and operator fee...","textChars":139,"textLines":3,"bbox":[90,300,280,130]}
+{"kind":"shape","id":"sh/6xo3ydk3","slide":11,"bbox":[451,206,330,260]}
+{"kind":"textbox","id":"sh/9ov2xo3q","slide":11,"text":"Next: evidence and governance","textPreview":"Next: evidence and governance","textChars":29,"textLines":1,"bbox":[475,230,285,46]}
+{"kind":"textbox","id":"sh/83m1oj25","slide":11,"text":"Add dashboards for split deviations, inventory shortfalls, rate-card coverage and saved-plan outcomes.\n\nFocus: measurable planning quality.","textPreview":"Add dashboards for split deviations, inventory shortfalls, rate-card coverage and saved-plan outcomes. |  | Focus: measurable planning qu...","textChars":139,"textLines":3,"bbox":[475,300,280,130]}
+{"kind":"shape","id":"sh/qtsvudwn","slide":11,"bbox":[836,206,330,260]}
+{"kind":"textbox","id":"sh/rulcnix8","slide":11,"text":"Later: controlled optimisation","textPreview":"Later: controlled optimisation","textChars":30,"textLines":1,"bbox":[860,230,285,46]}
+{"kind":"textbox","id":"sh/cvudw3et","slide":11,"text":"Validate V2 eCPM, fill-rate and tiering logic against V1 guardrails before enabling it.\n\nFocus: experiment design and safe release gates.","textPreview":"Validate V2 eCPM, fill-rate and tiering logic against V1 guardrails before enabling it. |  | Focus: experiment design and safe release ga...","textChars":137,"textLines":3,"bbox":[860,300,280,130]}
+{"kind":"textbox","id":"sh/dw3up8fe","slide":11,"text":"Technical note","textPreview":"Technical note","textChars":14,"textLines":1,"bbox":[66,540,130,22]}
+{"kind":"textbox","id":"sh/excvydwz","slide":11,"text":"The API currently rejects engine=v2 because it does not yet enforce the full Media Planner split, rate-card and budget rule set.","textPreview":"The API currently rejects engine=v2 because it does not yet enforce the full Media Planner split, rate-card and budget rule set.","textChars":128,"textLines":1,"bbox":[66,573,1070,33]}
+{"kind":"textbox","id":"sh/zylcridk","slide":11,"text":"Noon Media Planner  |  Internal presentation","textPreview":"Noon Media Planner  |  Internal presentation","textChars":44,"textLines":1,"bbox":[66,682,400,18]}
+{"kind":"textbox","id":"sh/0zud0ne5","slide":11,"text":"11","textPreview":"11","textChars":2,"textLines":1,"bbox":[1160,680,54,18]}
+{"kind":"notes","id":"nt/pfwt56","slide":11,"text":"Source: main.py create_media_plan and regenerate_media_plan reject v2; selection_v2.py module header describes prototype status."}
+{"kind":"slide","id":"sl/t0kxcy","slide":12,"title":"Decisions requested to move from capability to operating product","textShapes":6}
+{"kind":"textbox","id":"sh/r2xgjy94","slide":12,"text":"Decisions requested to move from capability to operating product","textPreview":"Decisions requested to move from capability to operating product","textChars":64,"textLines":1,"bbox":[66,42,1100,46]}
+{"kind":"textbox","id":"sh/c3qhc3ap","slide":12,"text":"The immediate objective is not a broader algorithm. It is adoption with accountable data and measurable planning quality.","textPreview":"The immediate objective is not a broader algorithm. It is adoption with accountable data and measurable planning quality.","textChars":121,"textLines":1,"bbox":[66,92,1100,27]}
+{"kind":"shape","id":"sh/d4zyl8ra","slide":12,"bbox":[66,126,1148,3]}
+{"kind":"shape","id":"sh/z6hgni9g","slide":12,"bbox":[66,535,1148,82]}
+{"kind":"textbox","id":"sh/07qhgna1","slide":12,"text":"Proposed outcome","textPreview":"Proposed outcome","textChars":16,"textLines":1,"bbox":[92,551,200,25]}
+{"kind":"textbox","id":"sh/18zypsrm","slide":12,"text":"Run a governed pilot, learn from the saved-plan evidence, then expand the planner with demonstrated commercial and operational confidence.","textPreview":"Run a governed pilot, learn from the saved-plan evidence, then expand the planner with demonstrated commercial and operational confidence.","textChars":138,"textLines":1,"bbox":[92,579,1060,22]}
+{"kind":"textbox","id":"sh/m98zixsr","slide":12,"text":"Noon Media Planner  |  Internal presentation","textPreview":"Noon Media Planner  |  Internal presentation","textChars":44,"textLines":1,"bbox":[66,682,400,18]}
+{"kind":"textbox","id":"sh/nu1gri9c","slide":12,"text":"12","textPreview":"12","textChars":2,"textLines":1,"bbox":[1160,680,54,18]}
+{"kind":"table","id":"tb/z2ds3exc","slide":12,"name":"","rows":5,"cols":3,"preview":"Decision | Why it matters | Suggested owner","bbox":[66,172,1148,296]}
+{"kind":"notes","id":"nt/t0kxcy","slide":12,"text":"Recommendation based on the current system architecture and explicit V2 production block. No external sources used."}

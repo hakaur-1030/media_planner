@@ -33,7 +33,7 @@ body{font-family:var(--font);background:radial-gradient(circle at top left,#fff7
 .np.done::before{content:"✓ ";font-size:10px}
 .nav-right{display:flex;align-items:center;gap:8px}
 .chip{padding:6px 12px;border-radius:20px;font-size:11px;font-weight:700;background:var(--noon-soft);color:var(--ink);border:1px solid rgba(255,207,51,.6)}
-.main{flex:1;padding:24px 28px;max-width:1200px;margin:0 auto;width:100%}
+.main{flex:1;padding:24px clamp(24px,3vw,56px);max-width:1920px;margin:0 auto;width:100%}
 .panel{display:none;animation:fadeIn .2s ease}
 .panel.show{display:block}
 @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
@@ -70,11 +70,12 @@ body{font-family:var(--font);background:radial-gradient(circle at top left,#fff7
 .obj-card.on .obj-title{color:var(--ink)}
 .objective-note{font-size:13px;color:var(--text2);line-height:1.6;margin:0 0 12px}
 .w-wrap{background:linear-gradient(180deg,#fffdf3,#f7f1db);border-radius:var(--r-md);padding:14px;margin-top:10px;border:1px solid var(--border)}
-.w-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.w-row{display:flex;align-items:center;gap:12px;margin-bottom:8px;width:100%}
 .w-row:last-child{margin-bottom:0}
 .w-lbl{font-size:12px;color:var(--text2);width:52px;flex-shrink:0}
-.w-val{font-size:12px;font-weight:600;color:var(--blue);width:34px;text-align:right;flex-shrink:0}
+.w-val{font-size:12px;font-weight:600;color:var(--blue);width:42px;text-align:right;flex-shrink:0}
 input[type=range]{flex:1;height:4px;border-radius:2px;accent-color:var(--noon)}
+.split-percent-input{width:76px!important;min-width:76px!important;padding:7px 8px!important;text-align:right;font-weight:600}
 .btn-row{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
 .btn{padding:9px 20px;border:1px solid var(--border);border-radius:var(--r-md);font-size:13px;font-weight:500;cursor:pointer;background:var(--surface);color:var(--text);font-family:var(--font);transition:.15s}
 .btn:hover{background:var(--surface2);border-color:var(--border2)}
@@ -172,6 +173,8 @@ td.mono{font-family:var(--mono);font-size:11px}
 .plan-cell-input.readable-page{min-width:170px;font-size:13px}
 .plan-cell-input.readable-text{min-width:150px;font-size:13px}
 .plan-cell-input.readable-brand{min-width:150px;font-size:13px}
+.plan-cell-select.country-select{min-width:96px;font-size:13px;font-weight:600}
+.plan-cell-select.buy-type-select{min-width:104px;font-size:13px;font-weight:600}
 .plan-cell-select.slot-select-wide{min-width:520px;font-size:13px}
 .plan-cell-note{min-width:180px}
 .plan-cell-note.readable-note{min-width:250px;font-size:13px}
@@ -218,6 +221,8 @@ td.mono{font-family:var(--mono);font-size:11px}
   .obj-grid{grid-template-columns:1fr}
   .metric-grid{grid-template-columns:repeat(2,1fr)}
   .main{padding:16px}
+  .w-row{gap:8px}
+  .split-percent-input{width:66px!important;min-width:66px!important}
   .topnav{padding:0 16px}
 }
 @media print{
@@ -262,10 +267,6 @@ td.mono{font-family:var(--mono);font-size:11px}
         </div>
         <div class="brand-helper" id="brandSearchHint">Type at least 2 characters to search brand codes. Select multiple brands if needed.</div>
         <div class="pill-group" id="brandChips" style="margin-top:8px"></div>
-        <div id="brandSplitBlock" class="w-wrap" style="display:none">
-          <div style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.05em;text-transform:uppercase;margin-bottom:10px">Brand budget split</div>
-          <div id="brandSplitRows"></div>
-        </div>
         <input id="bName" type="hidden"/>
       </div>
       <div class="field"><label>Countries</label>
@@ -283,6 +284,10 @@ td.mono{font-family:var(--mono);font-size:11px}
           <div class="pill" id="mk-supermall" onclick="setMarketplace('supermall')">Supermall</div>
         </div>
       </div>
+    </div>
+    <div id="brandSplitBlock" class="w-wrap" style="display:none">
+      <div style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.05em;text-transform:uppercase;margin-bottom:10px">Brand budget split</div>
+      <div id="brandSplitRows"></div>
     </div>
   </div>
   <div class="card">
@@ -321,19 +326,21 @@ td.mono{font-family:var(--mono);font-size:11px}
     </div>
     <div id="wBlock" class="w-wrap" style="display:none">
       <div style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.05em;text-transform:uppercase;margin-bottom:10px">Objective budget split</div>
-      <div class="w-row"><span class="w-lbl">Reach</span><input type="range" min="10" max="90" step="5" value="60" id="rW" oninput="syncW(this,'reach')"/><span class="w-val" id="rWv">60%</span></div>
-      <div class="w-row"><span class="w-lbl">ROAS</span><input type="range" min="10" max="90" step="5" value="40" id="oW" oninput="syncW(this,'roas')"/><span class="w-val" id="oWv">40%</span></div>
+      <div class="w-row"><span class="w-lbl">Reach</span><input type="range" min="10" max="90" step="5" value="60" id="rW" oninput="syncW(this,'reach')"/><input class="split-percent-input" type="number" min="10" max="90" step="1" value="60" id="rWInput" aria-label="Reach percentage" oninput="syncWValue(this.value,'reach')"/><span class="w-val" id="rWv">60%</span></div>
+      <div class="w-row"><span class="w-lbl">ROAS</span><input type="range" min="10" max="90" step="5" value="40" id="oW" oninput="syncW(this,'roas')"/><input class="split-percent-input" type="number" min="10" max="90" step="1" value="40" id="oWInput" aria-label="ROAS percentage" oninput="syncWValue(this.value,'roas')"/><span class="w-val" id="oWv">40%</span></div>
     </div>
     <div id="marketplaceSplitBlock" class="w-wrap" style="display:none">
       <div style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.05em;text-transform:uppercase;margin-bottom:10px">Marketplace budget split</div>
       <div class="w-row">
         <span class="w-lbl">Core</span>
         <input type="range" min="0" max="100" step="5" value="85" id="mkCoreW" oninput="syncMarketplaceSplit(this.value)"/>
+        <input class="split-percent-input" type="number" min="0" max="100" step="1" value="85" id="mkCoreWInput" aria-label="Core percentage" oninput="syncMarketplaceSplit(this.value)"/>
         <span class="w-val" id="mkCoreWv">85%</span>
       </div>
       <div class="w-row">
         <span class="w-lbl">Supermall</span>
         <input type="range" min="0" max="100" step="5" value="15" id="mkSuperW" oninput="syncMarketplaceSplit(100-this.value)"/>
+        <input class="split-percent-input" type="number" min="0" max="100" step="1" value="15" id="mkSuperWInput" aria-label="Supermall percentage" oninput="syncMarketplaceSplit(100-this.value)"/>
         <span class="w-val" id="mkSuperWv">15%</span>
       </div>
     </div>
@@ -832,6 +839,7 @@ function syncComcatSplitUi(){
     return `<div class="w-row">
       <span class="w-lbl" style="width:120px">${escapeHtml(entry.label)}</span>
       <input type="range" min="0" max="100" step="5" value="${value}" oninput='syncComcatSplit(${JSON.stringify(entry.key)},this.value)'/>
+      <input class="split-percent-input" type="number" min="0" max="100" step="1" value="${value}" aria-label="${escapeHtml(entry.label)} percentage" oninput='syncComcatSplit(${JSON.stringify(entry.key)},this.value)'/>
       <span class="w-val">${value}%</span>
     </div>`;
   }).join('');
@@ -897,6 +905,7 @@ function syncPhaseSplitUi(){
     return `<div class="w-row">
       <span class="w-lbl" style="width:120px">${escapeHtml(phase.name||'Phase')}</span>
       <input type="range" min="0" max="100" step="5" value="${value}" ${phases.length===1?'disabled':''} oninput='syncPhaseSplit(${JSON.stringify(phase.name)},this.value)'/>
+      <input class="split-percent-input" type="number" min="0" max="100" step="1" value="${phases.length===1?100:value}" ${phases.length===1?'disabled':''} aria-label="${escapeHtml(phase.name||'Phase')} percentage" oninput='syncPhaseSplit(${JSON.stringify(phase.name)},this.value)'/>
       <span class="w-val">${phases.length===1?100:value}%</span>
     </div>`;
   }).join('');
@@ -1290,6 +1299,7 @@ function syncBrandSplitUi(){
     return `<div class="w-row">
       <span class="w-lbl" style="width:120px">${escapeHtml(brand)}</span>
       <input type="range" min="0" max="100" step="5" value="${value}" oninput='syncBrandSplit(${JSON.stringify(brand)},this.value)'/>
+      <input class="split-percent-input" type="number" min="0" max="100" step="1" value="${value}" aria-label="${escapeHtml(brand)} percentage" oninput='syncBrandSplit(${JSON.stringify(brand)},this.value)'/>
       <span class="w-val">${value}%</span>
     </div>`;
   }).join('');
@@ -1329,8 +1339,12 @@ function syncObjectiveUi(){
   const oW=document.getElementById('oW');
   const rWv=document.getElementById('rWv');
   const oWv=document.getElementById('oWv');
+  const rWInput=document.getElementById('rWInput');
+  const oWInput=document.getElementById('oWInput');
   if(rW) rW.value=String(S.rW||60);
   if(oW) oW.value=String(S.oW||40);
+  if(rWInput) rWInput.value=String(S.rW||60);
+  if(oWInput) oWInput.value=String(S.oW||40);
   if(rWv) rWv.textContent=(S.rW||60)+'%';
   if(oWv) oWv.textContent=(S.oW||40)+'%';
   syncMarketplaceSplitUi();
@@ -1342,6 +1356,8 @@ function syncMarketplaceSplitUi(){
   const supermall=document.getElementById('mkSuperW');
   const coreVal=document.getElementById('mkCoreWv');
   const superVal=document.getElementById('mkSuperWv');
+  const coreInput=document.getElementById('mkCoreWInput');
+  const superInput=document.getElementById('mkSuperWInput');
   const show=S.marketplace==='both';
   if(block) block.style.display=show?'block':'none';
   const corePct=Math.max(0,Math.min(100,Number(S.marketplaceCorePct)||0));
@@ -1350,6 +1366,8 @@ function syncMarketplaceSplitUi(){
   S.marketplaceSupermallPct=superPct;
   if(core) core.value=String(corePct);
   if(supermall) supermall.value=String(superPct);
+  if(coreInput) coreInput.value=String(corePct);
+  if(superInput) superInput.value=String(superPct);
   if(coreVal) coreVal.textContent=corePct+'%';
   if(superVal) superVal.textContent=superPct+'%';
 }
@@ -1717,6 +1735,16 @@ function syncW(el,which){
   }
   document.getElementById('rWv').textContent=S.rW+'%';
   document.getElementById('oWv').textContent=S.oW+'%';
+  const rWInput=document.getElementById('rWInput');
+  const oWInput=document.getElementById('oWInput');
+  if(rWInput) rWInput.value=String(S.rW);
+  if(oWInput) oWInput.value=String(S.oW);
+}
+function syncWValue(value,which){
+  const input=document.getElementById(which==='reach'?'rW':'oW');
+  if(!input) return;
+  input.value=String(Math.max(10,Math.min(90,Number(value)||0)));
+  syncW(input,which);
 }
 function updateBudgetBar(){
   const offdeck=parseFloat(document.getElementById('bOffdeckBudget')?.value)||0;
@@ -2615,14 +2643,14 @@ function renderTable(){
     return `<tr>
     <td><input class="plan-cell-input" type="date" value="${r.from||''}" onchange="updateRowField(${r.id},'from',this.value)"></td>
     <td><input class="plan-cell-input" type="date" value="${r.to||''}" onchange="updateRowField(${r.id},'to',this.value)"></td>
-    <td>${isOffdeck?displayCountryCode(r.country):`<select class="plan-cell-select" onchange="updateRowField(${r.id},'country',this.value)"><option value="ae" ${r.country==='ae'?'selected':''}>AE</option><option value="sa" ${r.country==='sa'?'selected':''}>SA</option><option value="eg" ${r.country==='eg'?'selected':''}>EG</option></select>`}</td>
+    <td>${isOffdeck?displayCountryCode(r.country):`<select class="plan-cell-select country-select" aria-label="Country" onchange="updateRowField(${r.id},'country',this.value)"><option value="ae" ${r.country==='ae'?'selected':''}>AE</option><option value="sa" ${r.country==='sa'?'selected':''}>SA</option><option value="eg" ${r.country==='eg'?'selected':''}>EG</option></select>`}</td>
     <td>${(r.marketplace||getSlotMarketplace(r)||'').toUpperCase()}</td>
     <td><input class="plan-cell-input readable-page" value="${r.page||''}" oninput="updateRowField(${r.id},'page',this.value,false)" onblur="updateRowField(${r.id},'page',this.value,true)" onkeydown="if(event.key==='Enter'){this.blur()}"></td>
     <td>${r.zone||''}</td>
     <td>${r.dimension||''}</td>
     <td>${isOffdeck?`<div style="font-weight:600">${displaySlotName(r)}</div>`:slotSelectHtml(r.id,r)}<div class="slot-meta">${displayCountryCode(r.country)} | ${r.slot_code||'no_slot_selected'}${r.category?` | ${displayCategoryLabel(r.category)}`:''}</div></td>
     <td style="text-align:center"><span class="country-chip">${r.days||0}d</span></td>
-    <td>${isOffdeck?'OFF-DECK':`<select class="plan-cell-select" onchange="updateRowField(${r.id},'buyType',this.value)">${pricingOptionsHtml(findSlotMeta(r.country,r.slot_code)||r,r.buyType)}</select>`}</td>
+    <td>${isOffdeck?'OFF-DECK':`<select class="plan-cell-select buy-type-select" aria-label="Buy type" onchange="updateRowField(${r.id},'buyType',this.value)">${pricingOptionsHtml(findSlotMeta(r.country,r.slot_code)||r,r.buyType)}</select>`}</td>
     <td>${isOffdeck?'-':`<input class="plan-cell-input readable-rate" type="number" value="${rateText(netRate(r))}" oninput="updateRowField(${r.id},'rate',this.value,false)" onblur="updateRowField(${r.id},'rate',this.value,true)" onkeydown="if(event.key==='Enter'){this.blur()}">`}</td>
     <td><div class="slot-meta" style="font-size:12px">${isOffdeck?'-':rateMoney(grossRate(r),'USD')}</div></td>
     <td><div class="slot-meta" style="font-size:12px">${isOffdeck?'-':rateMoney(netRate(r),'USD')}</div></td>

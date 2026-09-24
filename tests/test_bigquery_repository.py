@@ -171,6 +171,26 @@ class RateCardTest(unittest.TestCase):
         self.assertEqual(rates["pricing_options"], ["CPM", "CPD"])
         self.assertEqual(by_slot["home_hero"]["cpm_rate_schedule"]["2026-10-01"], 19.0)
 
+    def test_q4_rate_card_accepts_descriptive_pricing_columns(self):
+        repo = object.__new__(BigQueryRepository)
+        repo.settings = SimpleNamespace(
+            slot_rate_card_table="project.dataset.rate_card_legacy",
+            slot_rate_card_q4_2026_table="project.dataset.rate_card_q4_2026",
+        )
+        repo._table_records_for_window = Mock(return_value=[
+            {
+                "slot": "noon_sa_home_page_hp_sfu1",
+                "date": "2026-11-28",
+                "country": "sa",
+                "pricing_model": "CPM",
+                "price": 11,
+            },
+        ])
+
+        rates, _ = repo._fetch_rate_card_map(date(2026, 11, 28), date(2026, 11, 28))
+
+        self.assertEqual(rates[("sa", "noon_sa_home_page_hp_sfu1")]["cpm_rate_schedule"], {"2026-11-28": 11.0})
+
     def test_maps_egypt_country_alias_and_country_prefixed_slot_code(self):
         repo = object.__new__(BigQueryRepository)
         repo.settings = SimpleNamespace(

@@ -16,6 +16,7 @@ from planner import (
     marketplace_from_slot,
     _placement_kind,
     _repair_daily_continuity,
+    _merge_duplicate_generated_rows,
     split_rows_at_rate_changes,
     _slot_values_relevance_for_comcat,
     campaign_duration_days,
@@ -133,6 +134,26 @@ class PlannerRulesTest(unittest.TestCase):
         self.assertEqual(sum(item.views or 0 for item in split), 4_000)
         self.assertEqual(sum(item.cost for item in split), 53.75)
         self.assertEqual(sum(item.gross_amount for item in split), 53.75)
+
+    def test_objective_rebalancing_duplicate_is_collapsed_to_one_booking_line(self):
+        base = EditablePlanLine.model_validate({
+            "id": 1, "from": date(2026, 11, 28), "to": date(2026, 12, 9),
+            "country": "sa", "page": "Home", "asset": "Top fold", "days": 11,
+            "buyType": "CPM", "rate": 10, "gross_cpm": 10, "net_cpm": 10,
+            "views": 1_000, "cost": 10, "gross_amount": 10, "net_amount": 10,
+            "phase": "Full flight", "brand": "Test", "stype": "conv", "slot_code": "noon_sa_top_fold_1",
+        })
+        duplicate = base.model_copy(deep=True)
+        duplicate.id = 2
+        duplicate.stype = "reach"
+        duplicate.views = 500
+        duplicate.cost = duplicate.net_amount = duplicate.gross_amount = 5
+
+        result = _merge_duplicate_generated_rows([base, duplicate])
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].views, 1_500)
+        self.assertEqual(result[0].cost, 15)
 
     def test_rate_change_splits_a_cpd_plan_line_without_changing_totals(self):
         row = EditablePlanLine.model_validate({
