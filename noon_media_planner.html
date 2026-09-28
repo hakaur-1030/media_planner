@@ -70,12 +70,13 @@ body{font-family:var(--font);background:radial-gradient(circle at top left,#fff7
 .obj-card.on .obj-title{color:var(--ink)}
 .objective-note{font-size:13px;color:var(--text2);line-height:1.6;margin:0 0 12px}
 .w-wrap{background:linear-gradient(180deg,#fffdf3,#f7f1db);border-radius:var(--r-md);padding:14px;margin-top:10px;border:1px solid var(--border)}
-.w-row{display:flex;align-items:center;gap:12px;margin-bottom:8px;width:100%}
+.w-row{display:grid;grid-template-columns:minmax(110px,160px) minmax(180px,1fr) 76px;align-items:center;gap:12px;margin-bottom:10px;width:100%}
 .w-row:last-child{margin-bottom:0}
-.w-lbl{font-size:12px;color:var(--text2);width:52px;flex-shrink:0}
-.w-val{font-size:12px;font-weight:600;color:var(--blue);width:42px;text-align:right;flex-shrink:0}
-input[type=range]{flex:1;height:4px;border-radius:2px;accent-color:var(--noon)}
-.split-percent-input{width:76px!important;min-width:76px!important;padding:7px 8px!important;text-align:right;font-weight:600}
+.w-lbl,.w-row .w-lbl{font-size:12px;color:var(--text2);width:auto!important;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.w-val{display:none}
+input[type=range]{width:100%;min-width:0;height:5px;border-radius:3px;accent-color:var(--noon)}
+.split-percent-input{width:76px!important;min-width:0!important;height:36px;padding:7px 9px!important;text-align:right;font-weight:700;color:var(--ink);background:linear-gradient(180deg,#fffdf4,#fff7d7)!important;border:1px solid var(--noon)!important;border-radius:9px!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.9)}
+.split-percent-input:focus{outline:none;border-color:#d9a400!important;box-shadow:0 0 0 3px rgba(255,207,51,.28),inset 0 1px 0 rgba(255,255,255,.9)!important}
 .btn-row{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
 .btn{padding:9px 20px;border:1px solid var(--border);border-radius:var(--r-md);font-size:13px;font-weight:500;cursor:pointer;background:var(--surface);color:var(--text);font-family:var(--font);transition:.15s}
 .btn:hover{background:var(--surface2);border-color:var(--border2)}
@@ -221,8 +222,8 @@ td.mono{font-family:var(--mono);font-size:11px}
   .obj-grid{grid-template-columns:1fr}
   .metric-grid{grid-template-columns:repeat(2,1fr)}
   .main{padding:16px}
-  .w-row{gap:8px}
-  .split-percent-input{width:66px!important;min-width:66px!important}
+  .w-row{grid-template-columns:92px minmax(0,1fr) 60px;gap:8px}
+  .split-percent-input{width:60px!important;min-width:0!important;padding:6px!important}
   .topnav{padding:0 16px}
 }
 @media print{
@@ -963,7 +964,7 @@ async function copyPlanUiLink(){
 function dateRangeDurationDays(startValue,endValue){
   if(!startValue||!endValue) return 0;
   const start=new Date(startValue+'T09:00:00');
-  const end=new Date(endValue+'T09:00:00');
+  const end=new Date(endValue+'T08:59:00');
   return Math.max(Math.round((end-start)/86400000),1);
 }
 function campaignDurationDays(){
@@ -2207,7 +2208,7 @@ function renderPreselectionBudgetUtilization(){
     let slotSpend=0;
     if(priced.pricing_model==='CPD'){
       const start=new Date((S.flightStart||todayStr())+'T09:00:00');
-      const end=new Date((S.flightEnd||S.flightStart||todayStr())+'T09:00:00');
+      const end=new Date((S.flightEnd||S.flightStart||todayStr())+'T08:59:00');
       const duration=Math.max(Math.round((end-start)/86400000),1);
       slotSpend=Number(priced.net_cpd||0)*duration;
     }else{

@@ -17,6 +17,7 @@ from planner import (
     _placement_kind,
     _repair_daily_continuity,
     _merge_duplicate_generated_rows,
+    _find_available_cpd_window,
     split_rows_at_rate_changes,
     _slot_values_relevance_for_comcat,
     campaign_duration_days,
@@ -154,6 +155,17 @@ class PlannerRulesTest(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].views, 1_500)
         self.assertEqual(result[0].cost, 15)
+
+    def test_cpd_window_can_start_on_the_date_a_prior_booking_ends_at_9am(self):
+        phase = Phase.model_validate({"name": "Full flight", "from": date(2026, 12, 1), "to": date(2026, 12, 12)})
+
+        window = _find_available_cpd_window(
+            phase, 3, [],
+            {f"2026-12-{day:02d}" for day in range(1, 9)},
+            date(2026, 12, 1),
+        )
+
+        self.assertEqual(window, (date(2026, 12, 9), date(2026, 12, 12), 3))
 
     def test_rate_change_splits_a_cpd_plan_line_without_changing_totals(self):
         row = EditablePlanLine.model_validate({

@@ -52,7 +52,7 @@ def inclusive_days(start: date, end: date) -> int:
 
 
 def campaign_duration_days(start: date, end: date) -> int:
-    """09:00-to-09:00 service days; the end date is the closing boundary."""
+    """09:00-to-08:59 service days; the end date closes at 08:59."""
     return max((end - start).days, 1)
 
 
@@ -499,7 +499,7 @@ def iter_dates(start: date, end: date):
 
 
 def service_window_dates(start: date, end: date) -> list[date]:
-    """Service dates in a 09:00-to-09:00 half-open interval [start, end)."""
+    """Service dates run from 09:00 on the start date through 08:59 on the end date."""
     if end <= start:
         return [start]
     return [start + timedelta(days=offset) for offset in range((end - start).days)]
@@ -1455,17 +1455,16 @@ def _coerce_rows(req: MediaPlanRequest) -> list[EditablePlanLine]:
 
 
 def _merge_duplicate_generated_rows(rows: list[EditablePlanLine]) -> list[EditablePlanLine]:
-    """Collapse presentation duplicates introduced by objective rebalancing.
+    """Collapse exact on-deck bookings for the same placement and date range.
 
-    A balanced plan may transfer part of a CPM line to the other objective.
-    Previously that transfer cloned the same placement for the same date range,
-    so the plan table showed the identical slot twice.  The booking is one
-    placement, not two, so keep one line and retain its total value/views.
+    A placement is one booking regardless of how its allocation was produced
+    (generated, manual, locked, or rate-split). Retain one line and its total
+    value/views so the final plan cannot display it twice.
     """
     merged: list[EditablePlanLine] = []
     by_key: dict[tuple[object, ...], EditablePlanLine] = {}
     for row in rows:
-        if row.manual or row.locked or not row.slot_code:
+        if str(row.buyType or "").upper() == "OFF-DECK" or not row.slot_code:
             merged.append(row)
             continue
         key = (
@@ -1474,14 +1473,14 @@ def _merge_duplicate_generated_rows(rows: list[EditablePlanLine]) -> list[Editab
             row.phase,
             row.from_date,
             row.to_date,
-            normalize_pricing_model(row.buyType),
-            row.brand,
         )
         existing = by_key.get(key)
         if existing is None:
             by_key[key] = row
             merged.append(row)
             continue
+        existing.manual = bool(existing.manual or row.manual)
+        existing.locked = bool(existing.locked or row.locked)
         existing_cost = float(existing.cost or existing.net_amount or 0)
         row_cost = float(row.cost or row.net_amount or 0)
         # Keep the objective label of the larger contribution; costs and
@@ -1606,6 +1605,33 @@ def _find_non_overlapping_slot_window(
             if any(_windows_overlap(cand_start, cand_end, blocked_start, blocked_end) for blocked_start, blocked_end in blocked_ranges):
                 continue
             return cand_start, cand_end, window_days
+    return None
+
+
+def _find_available_cpd_window(
+    phase: Phase,
+    desired_days: int,
+    blocked_ranges: list[tuple[date, date]],
+    booked_service_dates: set[str],
+    preferred_start: date,
+) -> tuple[date, date, int] | None:
+    """Find a CPD window that is free for every 09:00-to-08:59 service day."""
+    total_days = campaign_duration_days(phase.from_date, phase.to_date)
+    if total_days <= 0:
+        return None
+    preferred_offset = max(0, min((preferred_start - phase.from_date).days, total_days - 1))
+    offsets = sorted(range(total_days), key=lambda offset: abs(offset - preferred_offset))
+    for window_days in range(min(desired_days, total_days), 0, -1):
+        for offset in offsets:
+            if offset + window_days > total_days:
+                continue
+            start = phase.from_date + timedelta(days=offset)
+            end = start + timedelta(days=window_days)
+            if any(day.isoformat() in booked_service_dates for day in service_window_dates(start, end)):
+                continue
+            if any(_windows_overlap(start, end, blocked_start, blocked_end) for blocked_start, blocked_end in blocked_ranges):
+                continue
+            return start, end, window_days
     return None
 
 
@@ -2081,12 +2107,23 @@ def plan_media(
         phase_rows = [row for row in rows if row.country == candidate.country and row.phase == phase.name]
         slot_rows = [row for row in rows if row.country == candidate.country and row.slot_code == candidate.slot_code]
         row_from, row_to, days = _slot_window(phase, phase_rows, candidate.pricing_model, len(phase_rows))
-        slot_window = _find_non_overlapping_slot_window(
-            phase,
-            days,
-            _slot_existing_dates(rows, candidate.country, candidate.slot_code),
-            row_from,
-        )
+        meta = get_slot_meta(slot_meta, candidate.country, candidate.slot_code)
+        existing_slot_dates = _slot_existing_dates(rows, candidate.country, candidate.slot_code)
+        if candidate.pricing_model == "CPD":
+            slot_window = _find_available_cpd_window(
+                phase,
+                days,
+                existing_slot_dates,
+                {str(value) for value in (meta.get("cpd_booked_service_dates") or [])},
+                row_from,
+            )
+        else:
+            slot_window = _find_non_overlapping_slot_window(
+                phase,
+                days,
+                existing_slot_dates,
+                row_from,
+            )
         if not slot_window:
             return reject(f"No non-overlapping date window is available in phase '{phase.name}'.")
         row_from, row_to, days = slot_window
@@ -2098,7 +2135,6 @@ def plan_media(
         if not is_foc and slot_budget_remaining <= 0:
             cap_description = "campaign budget" if candidate.marketplace == "supermall" else f"maximum {MAX_SLOT_BUDGET_SHARE:.0%} share of the on-deck budget"
             return reject(f"This slot has reached the {cap_description}.")
-        meta = get_slot_meta(slot_meta, candidate.country, candidate.slot_code)
         if buy_type == "CPD":
             if not slot_has_rate_for_model(meta, "CPD", row_from, row_to, settings.default_cpd):
                 return reject(f"No valid CPD rate is available from {row_from} to {row_to}.")
@@ -2820,6 +2856,7 @@ def plan_media(
     # after all allocation, continuity, and objective balancing is complete so
     # phase, marketplace, inventory, and budget constraints remain unchanged.
     rows = split_rows_at_rate_changes(rows, slot_meta, req.discount_pct)
+    rows = _merge_duplicate_generated_rows(rows)
 
     on_deck_rows = [row for row in rows if str(row.buyType or "").upper() != "OFF-DECK"]
     on_deck_total = sum(float(row.cost or row.net_amount or 0) for row in on_deck_rows)

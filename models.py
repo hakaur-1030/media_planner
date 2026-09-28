@@ -96,17 +96,17 @@ class MediaPlanRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_phase_windows(self):
-        """Validate 09:00-to-09:00 phase windows before querying inventory.
+        """Validate phase windows ending at 08:59 before querying inventory.
 
-        Windows are half-open: [from, to).  A phase ending on 10 Oct at 09:00
-        may therefore be followed by another phase starting on 10 Oct at 09:00.
+        Windows are half-open: [from, to).  A phase ending on 10 Oct at 08:59
+        may be followed by another phase starting on 10 Oct at 09:00.
         """
         ordered = sorted(self.phases, key=lambda phase: (phase.from_date, phase.to_date, phase.name))
         for phase in ordered:
             if phase.to_date <= phase.from_date:
                 raise ValueError(
                     f"phase '{phase.name}' must end after it starts; "
-                    "09:00 to the same 09:00 is not a service window"
+                    "09:00 to 08:59 on the same day is not a service window"
                 )
             if phase.from_date < self.start_date or phase.to_date > self.end_date:
                 raise ValueError(f"phase '{phase.name}' must fall within the campaign dates")

@@ -53,7 +53,7 @@ class RecentBookingEligibilityTest(unittest.TestCase):
             {"country": "ae", "slot_code": "core_search", "slot_name": "Core Search", "marketplace": "core", "type": "CPM"},
             {"country": "ae", "slot_code": "supermall_search", "slot_name": "Supermall Search", "marketplace": "supermall", "type": "CPM"},
         ])
-        repo._fetch_booked_cpd_slot_keys = Mock(return_value=set())
+        repo._fetch_booked_cpd_service_dates = Mock(return_value={})
         repo._fetch_recent_booked_views = Mock(return_value={})
         repo._fetch_rate_card_map = Mock(return_value=({
             ("ae", "core_search"): {"cpm_rate": 10, "pricing_options": ["CPM"]},
@@ -86,7 +86,7 @@ class RateCardTest(unittest.TestCase):
         repo._query_records = Mock(return_value=[
             {"country": "eg", "slot_code": "noon_eg_upper_mid_page_2", "slot_name": "Upper Mid", "type": "CPM"},
         ])
-        repo._fetch_booked_cpd_slot_keys = Mock(return_value=set())
+        repo._fetch_booked_cpd_service_dates = Mock(return_value={})
         repo._fetch_recent_booked_views = Mock(return_value={
             ("eg", "noon_eg_upper_mid_page_2"): 100,
         })
@@ -207,6 +207,29 @@ class RateCardTest(unittest.TestCase):
         by_country_slot, _by_slot = repo._fetch_rate_card_map(date(2026, 9, 30), date(2026, 9, 30))
 
         self.assertEqual(by_country_slot[("eg", "mobile_clp")]["cpm_rate"], 12.0)
+
+
+class CpdBookingWindowTest(unittest.TestCase):
+    def test_booking_end_date_is_free_for_the_next_cpd_service_window(self):
+        repo = object.__new__(BigQueryRepository)
+        repo.settings = SimpleNamespace(booking_table="project.dataset.bookings")
+        repo._table_records_for_window = Mock(return_value=[
+            {
+                "country": "sa", "slot_code": "noon_sa_top_fold_1", "type": "CPD",
+                "start_date": "2026-12-01", "end_date": "2026-12-09",
+            },
+        ])
+        req = MediaPlanRequest.model_validate({
+            "brand": "Test", "comcats": ["Mobiles"], "countries": ["sa"],
+            "start_date": date(2026, 12, 1), "end_date": date(2026, 12, 12),
+            "budget": 20_000, "currency": "USD", "objective": "reach",
+        })
+
+        result = repo._fetch_booked_cpd_service_dates(req)
+
+        dates = result[("sa", "noon_sa_top_fold_1")]
+        self.assertIn("2026-12-08", dates)
+        self.assertNotIn("2026-12-09", dates)
 
 
 if __name__ == "__main__":

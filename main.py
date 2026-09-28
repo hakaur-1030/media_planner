@@ -30,6 +30,11 @@ FALLBACK_FX_RATES = {"AED": 3.6725, "SAR": 3.75, "EGP": 50.0}
 FX_CACHE: dict[str, object] = {"expires_at": 0.0, "rates": FALLBACK_FX_RATES.copy()}
 logger = logging.getLogger("media_planner")
 
+# Planning priorities: budget utilisation first, requested allocation splits
+# second, and portfolio-size guidance last.
+MIN_BUDGET_UTILIZATION_PCT = 95.0
+MAX_SPLIT_DEVIATION_PCT = 10.0
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -140,7 +145,7 @@ def plan_failure_message(diagnostics: dict, fallback: str = "No plan rows genera
     return diagnostics.get("reason") or fallback
 
 
-def budget_split_deviations(diagnostics: dict, reporting_threshold_pct: float = 10.0) -> list[str]:
+def budget_split_deviations(diagnostics: dict, reporting_threshold_pct: float = MAX_SPLIT_DEVIATION_PCT) -> list[str]:
     violations = []
     dimensions = (
         ("brand", diagnostics.get("brand_budget_split") or {}, diagnostics.get("actual_brand_budget_split") or {}),
@@ -158,7 +163,7 @@ def budget_split_deviations(diagnostics: dict, reporting_threshold_pct: float = 
     return violations
 
 
-def split_deviation_notices(diagnostics: dict, reporting_threshold_pct: float = 10.0) -> list[dict]:
+def split_deviation_notices(diagnostics: dict, reporting_threshold_pct: float = MAX_SPLIT_DEVIATION_PCT) -> list[dict]:
     notices = []
     dimensions = (
         ("brand", diagnostics.get("brand_budget_split") or {}, diagnostics.get("actual_brand_budget_split") or {}),
@@ -189,6 +194,11 @@ def annotate_split_diagnostics(diagnostics: dict) -> None:
     diagnostics["budget_split_deviations"] = budget_split_deviations(diagnostics)
     diagnostics["split_deviation_notices"] = split_deviation_notices(diagnostics)
     diagnostics["budget_split_status"] = "closest_feasible" if diagnostics["budget_split_deviations"] else "matched"
+    diagnostics["allocation_priority"] = [
+        f"Reach at least {MIN_BUDGET_UTILIZATION_PCT:.0f}% budget utilisation",
+        f"Keep requested budget splits within {MAX_SPLIT_DEVIATION_PCT:.0f} percentage points when feasible",
+        "Use slot-count guidance only after utilisation and split targets",
+    ]
 
 
 def require_split_tolerance(diagnostics: dict) -> None:
@@ -359,7 +369,7 @@ def build_available_slots(req: MediaPlanRequest, inventory_rows, slot_meta, incl
                 "type": str(meta.get("type") or meta.get("pricing_model") or "CPM").strip(),
                 "pricing_model": str(meta.get("pricing_model") or "CPM").strip(),
                 "pricing_options": list(meta.get("pricing_options") or [str(meta.get("pricing_model") or "CPM").strip()]),
-                "rate_available": bool(meta.get("rate_available", True)),
+                "rate_available": meta.get("rate_available") is not False,
                 "rate": float(meta.get("rate") or 0) or 0.0,
                 "cpm_rate": cpm_rate,
                 "cpd_rate": cpd_rate,
@@ -474,12 +484,17 @@ def slot_preselection(req: MediaPlanRequest, settings: Settings = Depends(get_se
     available_slots = build_available_slots(req, inventory_rows, slot_meta)
     manual_inventory_rows = repo.fetch_inventory(req, enforce_eligibility=False)
     manual_slot_meta = repo.fetch_slot_meta(req, enforce_eligibility=False)
-    manual_available_slots = build_available_slots(req, manual_inventory_rows, manual_slot_meta, include_zero=True)
+    manual_available_slots = [
+        slot for slot in build_available_slots(req, manual_inventory_rows, manual_slot_meta, include_zero=True)
+        if slot.get("rate_available") is not False
+    ]
     offdeck_slots = repo.fetch_offdeck_slots(req, enforce_eligibility=False)
     preview_rows = []
     preview_diagnostics = {}
     starting_count = min(recommendation_starting_count(req), len(suggestion_pool))
     suggestions = suggestion_pool[:starting_count]
+    next_suggestion_index = starting_count
+    target_utilization_pct = MIN_BUDGET_UTILIZATION_PCT
     while suggestions:
         preview_req = req.model_copy(deep=True)
         preview_req.selected_slot_keys = [slot["slot_key"] for slot in suggestions]
@@ -510,11 +525,25 @@ def slot_preselection(req: MediaPlanRequest, settings: Settings = Depends(get_se
             if preview_spend_by_slot.get(slot["slot_key"], 0.0) > 0
         ]
 
-        # The 6/10 campaign-wide guidance is a starting selection, not a
-        # minimum.  A preview may remove placements that cannot receive spend,
-        # but it must never append extra placements simply to chase budget
-        # utilisation; that dilutes small campaigns (for example $5k plans).
-        break
+        # The 6/10 portfolio guidance is a starting point, not a utilisation
+        # ceiling.  Add the next already-eligible recommendation when the
+        # preview remains materially under the 95% target.  Per-slot caps,
+        # rate validity, inventory and category/zone safeguards remain in the
+        # planner; if the pool is exhausted, the returned diagnostics make the
+        # genuine constraint visible instead of silently accepting a 35% plan.
+        if utilization >= target_utilization_pct or next_suggestion_index >= len(suggestion_pool):
+            break
+        selected_keys = {str(slot.get("slot_key") or "") for slot in suggestions}
+        next_slot = None
+        while next_suggestion_index < len(suggestion_pool):
+            candidate = suggestion_pool[next_suggestion_index]
+            next_suggestion_index += 1
+            if str(candidate.get("slot_key") or "") not in selected_keys:
+                next_slot = candidate
+                break
+        if not next_slot:
+            break
+        suggestions.append(next_slot)
     preview_spend_by_slot: dict[str, float] = {}
     for row in preview_rows:
         key = f"{row.country}|{row.slot_code}"
@@ -540,6 +569,11 @@ def slot_preselection(req: MediaPlanRequest, settings: Settings = Depends(get_se
             "recommended_slot_count": len(suggestions),
             "eligible_suggestion_pool_count": len(suggestion_pool),
             "recommendation_starting_count": starting_count,
+            "preselection_utilization_target_pct": target_utilization_pct,
+            "preselection_utilization_constrained": bool(
+                float(preview_diagnostics.get("budget_utilization_pct") or 0.0) < target_utilization_pct
+                and next_suggestion_index >= len(suggestion_pool)
+            ),
             "preview_status": preview_diagnostics.get("preview_status", "available"),
         },
     }

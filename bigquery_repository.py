@@ -249,13 +249,13 @@ def parse_number(value) -> float:
 
 
 def flight_date_fraction(dt: date, start: date, end: date) -> float:
-    """Share of a calendar date covered by a 09:00-to-09:00 flight."""
+    """Share of a calendar date covered by a flight ending at 08:59."""
     if start == end:
         return 1.0
     if dt == start:
         return 15 / 24
     if dt == end:
-        return 9 / 24
+        return ((8 * 60) + 59) / (24 * 60)
     return 1.0
 
 
@@ -652,7 +652,15 @@ class BigQueryRepository:
 
         return finalize(dict(by_country_slot)), finalize(dict(by_slot))
 
-    def _fetch_booked_cpd_slot_keys(self, req: MediaPlanRequest) -> set[tuple[str, str]]:
+    def _fetch_booked_cpd_service_dates(self, req: MediaPlanRequest) -> dict[tuple[str, str], set[str]]:
+        """Return CPD service dates already occupied by a booking ending at 08:59.
+
+        A booking from ``from`` to ``to`` occupies the half-open interval
+        [from 09:00, to 08:59].  Date-only booking feeds may provide just
+        ``dt``; that denotes one occupied CPD service day.  This keeps the
+        data model date-based while allowing a new booking to begin on the
+        exact date an earlier booking ends.
+        """
         rows = self._table_records_for_window(
             self.settings.booking_table,
             req.start_date,
@@ -661,7 +669,7 @@ class BigQueryRepository:
             "date",
         )
         countries = country_values(req.countries)
-        booked: set[tuple[str, str]] = set()
+        booked: dict[tuple[str, str], set[str]] = defaultdict(set)
         for row in rows:
             if not is_cpd_booking_row(row):
                 continue
@@ -669,8 +677,27 @@ class BigQueryRepository:
             if countries and country not in countries:
                 continue
             slot_code = str(get_first(row, "slot_code", "slot") or "").strip()
-            if slot_code:
-                booked.add((country, slot_code_key(slot_code)))
+            if not slot_code:
+                continue
+            start = parse_date(get_first(
+                row, "start_date", "booking_start_date", "booking_start", "from_date", "from", "start"
+            ))
+            end = parse_date(get_first(
+                row, "end_date", "booking_end_date", "booking_end", "to_date", "to", "end"
+            ))
+            # A date-only booking record means that one service day is taken.
+            if not start:
+                start = parse_date(get_first(row, "dt", "date"))
+            if not start:
+                continue
+            service_end = end if end and end > start else start + timedelta(days=1)
+            occupied_start = max(start, req.start_date)
+            occupied_end = min(service_end, req.end_date)
+            if occupied_end <= occupied_start:
+                continue
+            key = (country, slot_code_key(slot_code))
+            for offset in range((occupied_end - occupied_start).days):
+                booked[key].add((occupied_start + timedelta(days=offset)).isoformat())
         return booked
 
     def _fetch_recent_booked_views(self, req: MediaPlanRequest) -> dict[tuple[str, str], int]:
@@ -753,7 +780,7 @@ class BigQueryRepository:
         rows = self._query_records(f"SELECT * FROM `{self.settings.slot_data_table}`")
         rate_by_country_slot: dict[tuple[str, str], dict] = {}
         rate_by_slot: dict[str, dict] = {}
-        cpd_blocked_slot_keys: set[tuple[str, str]] = set()
+        cpd_booked_service_dates: dict[tuple[str, str], set[str]] = {}
         recent_booked_views: dict[tuple[str, str], int] | None = None
         exclude_cpd_by_budget = False
         if req is not None:
@@ -766,8 +793,11 @@ class BigQueryRepository:
                 last_service_date,
                 allow_q4_legacy_fallback=not enforce_eligibility,
             )
+            # Booked CPD service dates are always attached to the metadata.
+            # Manual selection may bypass ranking rules, but it must never
+            # overlap an existing CPD booking ending at 08:59.
+            cpd_booked_service_dates = self._fetch_booked_cpd_service_dates(req)
             if enforce_eligibility:
-                cpd_blocked_slot_keys = self._fetch_booked_cpd_slot_keys(req)
                 recent_booked_views = self._fetch_recent_booked_views(req)
                 exclude_cpd_by_budget = float(getattr(req, "budget", 0) or 0) < 15000
         catalog = []
@@ -807,7 +837,6 @@ class BigQueryRepository:
                 and pricing_model == "CPD"
                 and (
                     (exclude_cpd_by_budget and is_homepage_slot(row, slot_code, slot_name))
-                    or (country, normalized_slot_code) in cpd_blocked_slot_keys
                 )
             ):
                 continue
@@ -850,6 +879,7 @@ class BigQueryRepository:
                     "rate_schedule": dict(rate_meta.get("cpm_rate_schedule") or {}),
                     "cpm_rate_schedule": dict(rate_meta.get("cpm_rate_schedule") or {}),
                     "cpd_rate_schedule": dict(rate_meta.get("cpd_rate_schedule") or {}),
+                    "cpd_booked_service_dates": sorted(cpd_booked_service_dates.get((country, normalized_slot_code), set())),
                     "booked_views_last_12_months": booked_views,
                 }
             )
