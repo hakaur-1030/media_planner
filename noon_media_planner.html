@@ -479,13 +479,13 @@ td.mono{font-family:var(--mono);font-size:11px}
         </div>
         <div class="field">
           <label>Slot</label>
-          <select id="manualSlotCode" onchange="syncManualSlotPricingOptions()">
+          <select id="manualSlotCode">
             <option value="">Select slot</option>
           </select>
         </div>
         <div class="field">
-          <label>Buy type</label>
-          <select id="manualSlotPricing">
+          <label>Buy type filter</label>
+          <select id="manualSlotPricing" onchange="renderManualSlotOptions()">
             <option value="CPM">CPM</option>
           </select>
         </div>
@@ -1872,40 +1872,44 @@ function getSlotMarketplace(slot){
   return '';
 }
 
-function manualSlotsForCountry(country){
+function manualSlotsForCountry(country, pricingModel=""){
   return S.manualSlotCatalog.filter(slot=>{
     if(!country || slot.country!==country) return false;
-    const selectedMarketplace=document.getElementById('manualSlotMarketplace')?.value||'';
-    const pageFilter=document.getElementById('manualSlotPage')?.value||'';
+    const selectedMarketplace=document.getElementById("manualSlotMarketplace")?.value||"";
+    const pageFilter=document.getElementById("manualSlotPage")?.value||"";
     const slotMarketplace=getSlotMarketplace(slot);
-    if(selectedMarketplace && selectedMarketplace!=='both' && slotMarketplace!==selectedMarketplace) return false;
-    if(pageFilter && (slot.page||'')!==pageFilter) return false;
-    return true;
+    if(selectedMarketplace && selectedMarketplace!=="both" && slotMarketplace!==selectedMarketplace) return false;
+    if(pageFilter && (slot.page||"")!==pageFilter) return false;
+    return !pricingModel || slotPricingOptions(slot).includes(normalizePricingModel(pricingModel));
   });
 }
 
 function syncManualSlotPricingOptions(){
-  const country=document.getElementById('manualSlotCountry')?.value||'';
-  const slotCode=document.getElementById('manualSlotCode')?.value||'';
-  const pricing=document.getElementById('manualSlotPricing');
+  const country=document.getElementById("manualSlotCountry")?.value||"";
+  const pricing=document.getElementById("manualSlotPricing");
   if(!pricing) return;
-  const slot=S.manualSlotCatalog.find(item=>item.country===country && item.slot_code===slotCode);
-  const options=slotPricingOptions(slot||{pricing_model:'CPM'});
-  const current=normalizePricingModel(pricing.value||slot?.pricing_model||options[0]||'CPM');
-  pricing.innerHTML=options.map(option=>`<option value="${option}" ${current===option?'selected':''}>${option}</option>`).join('');
+  const supported=[...new Set(manualSlotsForCountry(country).flatMap(slot=>slotPricingOptions(slot)))].sort();
+  const current=normalizePricingModel(pricing.value||supported[0]||"CPM");
+  const options=supported.length?supported:["CPM"];
+  pricing.innerHTML=options.map(option=>"<option value=\""+option+"\""+(current===option?" selected":"")+">"+option+"</option>").join("");
+  pricing.value=options.includes(current)?current:options[0];
 }
 
 function renderManualSlotOptions(){
-  const country=document.getElementById('manualSlotCountry')?.value||'';
-  const select=document.getElementById('manualSlotCode');
+  const country=document.getElementById("manualSlotCountry")?.value||"";
+  const select=document.getElementById("manualSlotCode");
+  const pricing=document.getElementById("manualSlotPricing");
   if(!select) return;
-  const options=manualSlotsForCountry(country);
-  select.innerHTML='<option value="">Select slot</option>'+options.map(slot=>{
-    const unavailable=slot.rate_available===false;
-    const label=`${slot.slot_name} (${slot.slot_code}) · ${unavailable?'Unavailable — no official rate':`${views10(slot.available_views||0)} views`}`;
-    return `<option value="${slot.slot_code}" ${unavailable?'disabled':''}>${label}</option>`;
-  }).join('');
+  const previous=select.value;
   syncManualSlotPricingOptions();
+  const pricingModel=normalizePricingModel(pricing?.value||"CPM");
+  const options=manualSlotsForCountry(country,pricingModel);
+  select.innerHTML="<option value=\"\">Select slot</option>"+options.map(slot=>{
+    const unavailable=slot.rate_available===false;
+    const label=(slot.slot_name||slot.slot_code)+" ("+slot.slot_code+") · "+(unavailable?"Unavailable — no official rate":views10(slot.available_views||0)+" views");
+    return "<option value=\""+escapeHtml(slot.slot_code)+"\""+(unavailable?" disabled":"")+">"+escapeHtml(label)+"</option>";
+  }).join("");
+  if(options.some(slot=>slot.slot_code===previous)) select.value=previous;
 }
 
 function toggleManualFoc(){
@@ -2119,7 +2123,8 @@ function addManualSelectedSlot(){
   if(!country || !slotCode){ alert('Select a country and slot.'); return; }
   const slot=S.manualSlotCatalog.find(item=>item.country===country && item.slot_code===slotCode);
   if(!slot){ alert('Selected slot was not found in the slot catalog.'); return; }
-  if(slot.rate_available===false){ alert('This slot is unavailable because no official rate-card price exists for the selected dates.'); return; }
+  if(slot.rate_available===false){ alert("This slot is unavailable because no official rate-card price exists for the selected dates."); return; }
+  if(!slotPricingOptions(slot).includes(pricingModel)){ alert("This slot does not support the selected buy type."); return; }
   upsertSelectedSlot({
     slot_key:slotKey(country,slotCode),
     country,
@@ -2674,7 +2679,8 @@ function renderTable(){
   const total=S.rows.reduce((a,r)=>a+netAmount(r),0);
   const grossTotal=S.rows.reduce((a,r)=>a+grossAmount(r),0);
   const budgetBase=netBudgetBase();
-  const rem=budgetBase-total;
+  const rawRemaining=budgetBase-total;
+  const rem=Math.abs(rawRemaining)<0.01?0:rawRemaining;
   const cur=S.currency||'AED';
   document.getElementById('totVal').textContent=money2(grossTotal,'USD')+' gross  |  '+money2(total,'USD')+' net';
   const rb=document.getElementById('remBadge');
