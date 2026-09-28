@@ -108,7 +108,7 @@ def unhandled_exception_handler(request: Request, exc: Exception):
         return support_error_response(
             503,
             "bigquery",
-            "BigQuery is not responding or the application cannot access the required BigQuery data.",
+            "BigQuery outage or no response from BigQuery. Please try again shortly.",
             "Data/BI POC",
             reference,
             f"{type(exc).__name__}: {str(exc) or 'No additional detail'}",

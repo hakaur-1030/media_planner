@@ -70,12 +70,12 @@ body{font-family:var(--font);background:radial-gradient(circle at top left,#fff7
 .obj-card.on .obj-title{color:var(--ink)}
 .objective-note{font-size:13px;color:var(--text2);line-height:1.6;margin:0 0 12px}
 .w-wrap{background:linear-gradient(180deg,#fffdf3,#f7f1db);border-radius:var(--r-md);padding:14px;margin-top:10px;border:1px solid var(--border)}
-.w-row{display:grid;grid-template-columns:minmax(110px,160px) minmax(180px,1fr) 76px;align-items:center;gap:12px;margin-bottom:10px;width:100%}
+.w-row{display:grid;grid-template-columns:minmax(110px,160px) minmax(180px,1fr) 88px;align-items:center;gap:12px;margin-bottom:10px;width:100%}
 .w-row:last-child{margin-bottom:0}
 .w-lbl,.w-row .w-lbl{font-size:12px;color:var(--text2);width:auto!important;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .w-val{display:none}
 input[type=range]{width:100%;min-width:0;height:5px;border-radius:3px;accent-color:var(--noon)}
-.split-percent-input{width:76px!important;min-width:0!important;height:36px;padding:7px 9px!important;text-align:right;font-weight:700;color:var(--ink);background:linear-gradient(180deg,#fffdf4,#fff7d7)!important;border:1px solid var(--noon)!important;border-radius:9px!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.9)}
+.percent-input-wrap{position:relative;width:88px;min-width:0}.split-percent-input{width:100%!important;min-width:0!important;height:36px;padding:7px 25px 7px 9px!important;text-align:right;font-weight:700;color:var(--ink);background:linear-gradient(180deg,#fffdf4,#fff7d7)!important;border:1px solid var(--noon)!important;border-radius:9px!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.9)}.percent-input-suffix{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:12px;font-weight:700;color:var(--text2);pointer-events:none}
 .split-percent-input:focus{outline:none;border-color:#d9a400!important;box-shadow:0 0 0 3px rgba(255,207,51,.28),inset 0 1px 0 rgba(255,255,255,.9)!important}
 .btn-row{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
 .btn{padding:9px 20px;border:1px solid var(--border);border-radius:var(--r-md);font-size:13px;font-weight:500;cursor:pointer;background:var(--surface);color:var(--text);font-family:var(--font);transition:.15s}
@@ -222,8 +222,8 @@ td.mono{font-family:var(--mono);font-size:11px}
   .obj-grid{grid-template-columns:1fr}
   .metric-grid{grid-template-columns:repeat(2,1fr)}
   .main{padding:16px}
-  .w-row{grid-template-columns:92px minmax(0,1fr) 60px;gap:8px}
-  .split-percent-input{width:60px!important;min-width:0!important;padding:6px!important}
+  .w-row{grid-template-columns:92px minmax(0,1fr) 68px;gap:8px}.percent-input-wrap{width:68px}
+  .split-percent-input{width:100%!important;min-width:0!important;padding:6px 22px 6px 5px!important}
   .topnav{padding:0 16px}
 }
 @media print{
@@ -327,21 +327,21 @@ td.mono{font-family:var(--mono);font-size:11px}
     </div>
     <div id="wBlock" class="w-wrap" style="display:none">
       <div style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.05em;text-transform:uppercase;margin-bottom:10px">Objective budget split</div>
-      <div class="w-row"><span class="w-lbl">Reach</span><input type="range" min="10" max="90" step="5" value="60" id="rW" oninput="syncW(this,'reach')"/><input class="split-percent-input" type="number" min="10" max="90" step="1" value="60" id="rWInput" aria-label="Reach percentage" oninput="syncWValue(this.value,'reach')"/><span class="w-val" id="rWv">60%</span></div>
-      <div class="w-row"><span class="w-lbl">ROAS</span><input type="range" min="10" max="90" step="5" value="40" id="oW" oninput="syncW(this,'roas')"/><input class="split-percent-input" type="number" min="10" max="90" step="1" value="40" id="oWInput" aria-label="ROAS percentage" oninput="syncWValue(this.value,'roas')"/><span class="w-val" id="oWv">40%</span></div>
+      <div class="w-row"><span class="w-lbl">Reach</span><input type="range" min="10" max="90" step="5" value="60" id="rW" oninput="syncW(this,'reach')"/><div class="percent-input-wrap"><input class="split-percent-input" type="number" min="10" max="90" step="1" value="60" id="rWInput" aria-label="Reach percentage" oninput="syncWValue(this,'reach')" onchange="syncWValue(this,'reach',true)"/><span class="percent-input-suffix">%</span></div><span class="w-val" id="rWv">60%</span></div>
+      <div class="w-row"><span class="w-lbl">ROAS</span><input type="range" min="10" max="90" step="5" value="40" id="oW" oninput="syncW(this,'roas')"/><div class="percent-input-wrap"><input class="split-percent-input" type="number" min="10" max="90" step="1" value="40" id="oWInput" aria-label="ROAS percentage" oninput="syncWValue(this,'roas')" onchange="syncWValue(this,'roas',true)"/><span class="percent-input-suffix">%</span></div><span class="w-val" id="oWv">40%</span></div>
     </div>
     <div id="marketplaceSplitBlock" class="w-wrap" style="display:none">
       <div style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.05em;text-transform:uppercase;margin-bottom:10px">Marketplace budget split</div>
       <div class="w-row">
         <span class="w-lbl">Core</span>
         <input type="range" min="0" max="100" step="5" value="85" id="mkCoreW" oninput="syncMarketplaceSplit(this.value)"/>
-        <input class="split-percent-input" type="number" min="0" max="100" step="1" value="85" id="mkCoreWInput" aria-label="Core percentage" oninput="syncMarketplaceSplit(this.value)"/>
+        <div class="percent-input-wrap"><input class="split-percent-input" type="number" min="0" max="100" step="1" value="85" id="mkCoreWInput" aria-label="Core percentage" oninput="syncMarketplaceSplit(this.value,this)" onchange="syncMarketplaceSplit(this.value)"/><span class="percent-input-suffix">%</span></div>
         <span class="w-val" id="mkCoreWv">85%</span>
       </div>
       <div class="w-row">
         <span class="w-lbl">Supermall</span>
         <input type="range" min="0" max="100" step="5" value="15" id="mkSuperW" oninput="syncMarketplaceSplit(100-this.value)"/>
-        <input class="split-percent-input" type="number" min="0" max="100" step="1" value="15" id="mkSuperWInput" aria-label="Supermall percentage" oninput="syncMarketplaceSplit(100-this.value)"/>
+        <div class="percent-input-wrap"><input class="split-percent-input" type="number" min="0" max="100" step="1" value="15" id="mkSuperWInput" aria-label="Supermall percentage" oninput="syncMarketplaceSplit(100-this.value,this)" onchange="syncMarketplaceSplit(100-this.value)"/><span class="percent-input-suffix">%</span></div>
         <span class="w-val" id="mkSuperWv">15%</span>
       </div>
     </div>
@@ -824,6 +824,21 @@ function normalizeComcatSplits(){
   S.comcatSplits=next;
   return entries;
 }
+function decoratePercentageInputs(container){
+  if(!container) return;
+  container.querySelectorAll(".split-percent-input").forEach(input=>{
+    if(input.parentElement?.classList.contains("percent-input-wrap")) return;
+    const wrap=document.createElement("div");
+    wrap.className="percent-input-wrap";
+    input.before(wrap);
+    wrap.appendChild(input);
+    const suffix=document.createElement("span");
+    suffix.className="percent-input-suffix";
+    suffix.textContent="%";
+    wrap.appendChild(suffix);
+  });
+}
+
 function syncComcatSplitUi(){
   const block=document.getElementById('comcatSplitBlock');
   const rows=document.getElementById('comcatSplitRows');
@@ -844,8 +859,10 @@ function syncComcatSplitUi(){
       <span class="w-val">${value}%</span>
     </div>`;
   }).join('');
+  decoratePercentageInputs(rows);
 }
 function syncComcatSplit(key,value){
+  const activeInput=document.activeElement?.classList?.contains("split-percent-input") ? document.activeElement : null;
   const entries=selectedComcatSplitEntries();
   const target=Math.max(0,Math.min(100,Number(value)||0));
   const others=entries.filter(entry=>entry.key!==key);
@@ -856,6 +873,11 @@ function syncComcatSplit(key,value){
     others.forEach(entry=>{
       S.comcatSplits[entry.key]=otherTotal>0?(Number(S.comcatSplits[entry.key]||0)/otherTotal)*remaining:remaining/others.length;
     });
+  }
+  if(activeInput){
+    const slider=activeInput.closest(".w-row")?.querySelector("input[type=range]");
+    if(slider) slider.value=String(target);
+    return;
   }
   syncComcatSplitUi();
 }
@@ -910,8 +932,10 @@ function syncPhaseSplitUi(){
       <span class="w-val">${phases.length===1?100:value}%</span>
     </div>`;
   }).join('');
+  decoratePercentageInputs(rows);
 }
 function syncPhaseSplit(key,value){
+  const activeInput=document.activeElement?.classList?.contains("split-percent-input") ? document.activeElement : null;
   const phases=S.phases||[];
   const target=Math.max(0,Math.min(100,Number(value)||0));
   const others=phases.filter(phase=>phase.name!==key);
@@ -922,6 +946,11 @@ function syncPhaseSplit(key,value){
     others.forEach(phase=>{
       S.phaseSplits[phase.name]=otherTotal>0?(Number(S.phaseSplits[phase.name]||0)/otherTotal)*remaining:remaining/others.length;
     });
+  }
+  if(activeInput){
+    const slider=activeInput.closest(".w-row")?.querySelector("input[type=range]");
+    if(slider) slider.value=String(target);
+    return;
   }
   syncPhaseSplitUi();
 }
@@ -1089,7 +1118,7 @@ function apiErrorFromResponse(data,fallback,raw='',response=null){
   const platformUnavailable=Number(response&&response.status)===503&&!structured;
   const error=new Error(
     (structured&&detail.message)
-    || (platformUnavailable?'We are facing an issue connecting to BigQuery. Please click Generate again.':'')
+    || (platformUnavailable?'BigQuery outage or no response from BigQuery. Please try again.':'')
     || fallback
   );
   const allocationNotices=structured&&detail.diagnostics&&detail.diagnostics.split_deviation_notices;
@@ -1100,7 +1129,7 @@ function apiErrorFromResponse(data,fallback,raw='',response=null){
   error.technicalDetail=platformUnavailable
     ? 'The service did not return additional diagnostics. Click Generate again; if the issue continues, contact Data/BI support.'
     : ((structured&&detail.technical_detail)||allocationDetail||diagnostics||(typeof detail==='string'?detail:raw)||'');
-  error.title=allocationDetail?'Requested split cannot be met':(platformUnavailable?'BigQuery connection issue':'');
+  error.title=allocationDetail?'Requested split cannot be met':(platformUnavailable?'BigQuery outage or no response':'');
   error.reference=(structured&&detail.reference)||'';
   error.contact=(structured&&detail.contact)||'';
   error.source=(structured&&detail.source)||(platformUnavailable?'planning data service':'');
@@ -1136,7 +1165,7 @@ function showErrorDialog(error,fallback='Unable to complete the request'){
   if(!backdrop){ alert(value.message||fallback); return; }
   const isNetworkError=value instanceof TypeError&&!value.source;
   const displayMessage=isNetworkError?'The Media Planner server could not be reached. Please check the connection and try again.':(value.message||fallback);
-  document.getElementById('errorDialogTitle').textContent=value.title||(value.source==='bigquery'?'Data service unavailable':fallback);
+  document.getElementById('errorDialogTitle').textContent=value.title||(value.source==='bigquery'?'BigQuery outage or no response':fallback);
   document.getElementById('errorDialogMessage').textContent=displayMessage;
   const meta=[];
   if(value.contact) meta.push(`Responsible team: ${value.contact}`);
@@ -1304,9 +1333,11 @@ function syncBrandSplitUi(){
       <span class="w-val">${value}%</span>
     </div>`;
   }).join('');
+  decoratePercentageInputs(rows);
 }
 
 function syncBrandSplit(key,value){
+  const activeInput=document.activeElement?.classList?.contains("split-percent-input") ? document.activeElement : null;
   const brands=selectedBrandsForPayload();
   const target=Math.max(0,Math.min(100,Number(value)||0));
   const others=brands.filter(brand=>brand!==key);
@@ -1317,6 +1348,11 @@ function syncBrandSplit(key,value){
     others.forEach(brand=>{
       S.brandSplits[brand]=otherTotal>0?(Number(S.brandSplits[brand]||0)/otherTotal)*remaining:remaining/others.length;
     });
+  }
+  if(activeInput){
+    const slider=activeInput.closest(".w-row")?.querySelector("input[type=range]");
+    if(slider) slider.value=String(target);
+    return;
   }
   syncBrandSplitUi();
 }
@@ -1351,7 +1387,7 @@ function syncObjectiveUi(){
   syncMarketplaceSplitUi();
 }
 
-function syncMarketplaceSplitUi(){
+function syncMarketplaceSplitUi(source){
   const block=document.getElementById('marketplaceSplitBlock');
   const core=document.getElementById('mkCoreW');
   const supermall=document.getElementById('mkSuperW');
@@ -1367,18 +1403,18 @@ function syncMarketplaceSplitUi(){
   S.marketplaceSupermallPct=superPct;
   if(core) core.value=String(corePct);
   if(supermall) supermall.value=String(superPct);
-  if(coreInput) coreInput.value=String(corePct);
-  if(superInput) superInput.value=String(superPct);
+  if(coreInput && coreInput!==source) coreInput.value=String(corePct);
+  if(superInput && superInput!==source) superInput.value=String(superPct);
   if(coreVal) coreVal.textContent=corePct+'%';
   if(superVal) superVal.textContent=superPct+'%';
 }
 
-function syncMarketplaceSplit(value){
+function syncMarketplaceSplit(value,source){
   const corePct=Math.max(0,Math.min(100,Number(value)||0));
   S.marketplaceCorePct=corePct;
   S.marketplaceSupermallPct=100-corePct;
   S.supermallSplitConfirmedPct=null;
-  syncMarketplaceSplitUi();
+  syncMarketplaceSplitUi(source);
 }
 
 function syncBudgetLockUi(){
@@ -1726,7 +1762,7 @@ function setObj(type){
   if(S.obj==='both' && (S.rW<=0 || S.oW<=0)){ S.rW=60; S.oW=40; }
   syncObjectiveUi();
 }
-function syncW(el,which){
+function syncW(el,which,source){
   S.obj='both';
   const v=parseInt(el.value,10);
   if(which==='reach'){
@@ -1738,14 +1774,20 @@ function syncW(el,which){
   document.getElementById('oWv').textContent=S.oW+'%';
   const rWInput=document.getElementById('rWInput');
   const oWInput=document.getElementById('oWInput');
-  if(rWInput) rWInput.value=String(S.rW);
-  if(oWInput) oWInput.value=String(S.oW);
+  if(rWInput && rWInput!==source) rWInput.value=String(S.rW);
+  if(oWInput && oWInput!==source) oWInput.value=String(S.oW);
 }
-function syncWValue(value,which){
+function syncWValue(source,which,commit=false){
+  const raw=source.value;
+  if(raw==="") return;
+  const value=Number(raw);
+  if(!Number.isFinite(value)) return;
   const input=document.getElementById(which==='reach'?'rW':'oW');
   if(!input) return;
-  input.value=String(Math.max(10,Math.min(90,Number(value)||0)));
-  syncW(input,which);
+  const normalized=Math.max(10,Math.min(90,value));
+  input.value=String(normalized);
+  syncW(input,which,source);
+  if(commit) source.value=String(normalized);
 }
 function updateBudgetBar(){
   const offdeck=parseFloat(document.getElementById('bOffdeckBudget')?.value)||0;
@@ -2311,7 +2353,7 @@ function onDatesChange(){
   S.calPage=0;
   const s=new Date(S.flightStart+'T00:00:00'), e=new Date(S.flightEnd+'T00:00:00');
   const d=Math.max(Math.round((e-s)/86400000),1);
-  document.getElementById('durBadge').textContent=isNaN(d)||d<0?'-':d+' days · 9am to 9am';
+  document.getElementById('durBadge').textContent=isNaN(d)||d<0?'-':d+' days · 9am to 8:59am';
   S.phases=S.phases.filter(p=>(!S.flightStart||p.from>=S.flightStart)&&(!S.flightEnd||p.to<=S.flightEnd));
   buildCalendar();
 }
@@ -2507,7 +2549,7 @@ async function buildPlan(retryPayload=null){
     nav(5);
     showAllocationWarnings(S.planDiagnostics);
   }catch(e){
-    document.getElementById('navChip').textContent='Plan failed';
+    document.getElementById('navChip').textContent=e.source==='bigquery'?'BigQuery unavailable':'Plan failed';
     // Replay this exact request, rather than rebuilding from UI state.
     e.retryAction=()=>buildPlan(copyPlanningPayload(payload));
     e.retryLabel='Retry generation';
@@ -2517,7 +2559,17 @@ async function buildPlan(retryPayload=null){
 
 function phClass(ph){ if(!ph) return 'ph-custom'; const l=ph.toLowerCase(); if(l.includes('jan')) return 'ph-jan'; if(l.includes('feb')) return 'ph-feb'; if(l.includes('mar')) return 'ph-mar'; if(l.includes('eid')) return 'ph-eid'; if(l.includes('ram')) return 'ph-ram'; return 'ph-custom'; }
 
+function comparePlanRowsByFrom(left,right){
+  const compare=(a,b)=>String(a||"9999-12-31").localeCompare(String(b||"9999-12-31"));
+  return compare(left.from,right.from)
+    || compare(left.to,right.to)
+    || String(left.country||"").localeCompare(String(right.country||""))
+    || String(left.marketplace||"").localeCompare(String(right.marketplace||""))
+    || String(left.slot_name||left.asset||left.slot_code||"").localeCompare(String(right.slot_name||right.asset||right.slot_code||""));
+}
+
 function renderAll(){
+  S.rows.sort(comparePlanRowsByFrom);
   const brand=displaySelectedBrandNames();
   const countries=displayCountries()||'Countries';
   document.getElementById('planBrandTitle').textContent=brand+' — '+countries+' recommendation';
