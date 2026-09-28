@@ -2560,8 +2560,8 @@ def plan_media(
         target_budget = (max(req.budget - spent_total, 0) / remaining_slots) * max(brand_share, 0.01)
         append_row(candidate, phase, selected_stype, selected_score, target_budget, force=True, brand_name=brand_name)
 
-    # CPM is continuously scalable, so use remaining inventory to close phase and
-    # marketplace deficits before reporting the plan.  This also avoids leaving a
+    # CPM is continuously scalable, so use remaining inventory to close brand,
+    # phase, marketplace, and objective deficits before reporting the plan.  This also avoids leaving a
     # material budget remainder merely because the initial line quotas were met.
     topup_added = 0.0
     topup_iterations = 0
@@ -2574,6 +2574,7 @@ def plan_media(
         remaining_budget = round(max(utilization_target_spend - spent_total, 0), 2)
         if remaining_budget <= 0:
             break
+        brand_spend = defaultdict(float)
         phase_spend = defaultdict(float)
         marketplace_spend = defaultdict(float)
         objective_spend = defaultdict(float)
@@ -2581,11 +2582,13 @@ def plan_media(
             if str(existing_row.buyType or "").upper() == "OFF-DECK":
                 continue
             row_spend = float(existing_row.cost or existing_row.net_amount or 0)
+            brand_spend[existing_row.brand] += row_spend
             phase_spend[existing_row.phase] += row_spend
             marketplace_spend[existing_row.marketplace] += row_spend
             objective_spend[existing_row.stype] += row_spend
 
         eligible_rows: list[tuple[float, EditablePlanLine, int, float, float]] = []
+        brand_share_map = dict(brand_splits)
         marketplace_share_map = dict(marketplace_splits)
         objective_share_map = {stype: share for stype, share, _score_name in _allocation_tracks(req)}
         for existing_row in rows:
@@ -2598,14 +2601,17 @@ def plan_media(
             slot_budget_remaining = round(max(maximum_slot_budget(req, existing_row.marketplace) - spent_by_slot[existing_slot_key], 0), 2)
             if remaining_views < 100 or net_cpm <= 0 or min(remaining_budget, slot_budget_remaining) + 1e-9 < net_cpm * 0.1:
                 continue
+            brand_target = req.budget * brand_share_map.get(existing_row.brand, 0)
             phase_target = req.budget * phase_splits.get(existing_row.phase, 0)
             marketplace_target = req.budget * marketplace_share_map.get(existing_row.marketplace, 0)
             objective_target = req.budget * objective_share_map.get(existing_row.stype, 0)
+            brand_gap = brand_target - brand_spend[existing_row.brand]
             phase_gap = phase_target - phase_spend[existing_row.phase]
             marketplace_gap = marketplace_target - marketplace_spend[existing_row.marketplace]
             objective_gap = objective_target - objective_spend[existing_row.stype]
             deficit_score = (
-                phase_gap / max(phase_target, 1.0)
+                brand_gap / max(brand_target, 1.0)
+                + phase_gap / max(phase_target, 1.0)
                 + marketplace_gap / max(marketplace_target, 1.0)
                 + objective_gap / max(objective_target, 1.0)
             )
@@ -2617,12 +2623,14 @@ def plan_media(
             eligible_rows,
             key=lambda item: (item[0], item[1].score, item[2]),
         )
+        brand_target = req.budget * brand_share_map.get(row_to_grow.brand, 0)
         phase_target = req.budget * phase_splits.get(row_to_grow.phase, 0)
         marketplace_target = req.budget * marketplace_share_map.get(row_to_grow.marketplace, 0)
         objective_target = req.budget * objective_share_map.get(row_to_grow.stype, 0)
         positive_gaps = [
             gap
             for gap in (
+                brand_target - brand_spend[row_to_grow.brand],
                 phase_target - phase_spend[row_to_grow.phase],
                 marketplace_target - marketplace_spend[row_to_grow.marketplace],
                 objective_target - objective_spend[row_to_grow.stype],
@@ -2857,6 +2865,12 @@ def plan_media(
     # phase, marketplace, inventory, and budget constraints remain unchanged.
     rows = split_rows_at_rate_changes(rows, slot_meta, req.discount_pct)
     rows = _merge_duplicate_generated_rows(rows)
+
+    # Gross totals are a financial display value: after allocation, balancing,
+    # and rate-boundary splitting, derive every line from its final net spend
+    # and the plan discount so totals cannot drift from the budget cards.
+    for row in rows:
+        row.gross_amount = gross_from_net(float(row.net_amount or row.cost or 0), req.discount_pct)
 
     on_deck_rows = [row for row in rows if str(row.buyType or "").upper() != "OFF-DECK"]
     on_deck_total = sum(float(row.cost or row.net_amount or 0) for row in on_deck_rows)

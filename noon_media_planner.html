@@ -824,6 +824,19 @@ function normalizeComcatSplits(){
   S.comcatSplits=next;
   return entries;
 }
+function syncRenderedSplitRows(containerId, keys, values, activeInput){
+  const container=document.getElementById(containerId);
+  if(!container) return;
+  [...container.querySelectorAll(".w-row")].forEach((row,index)=>{
+    const value=Math.round(Number(values[keys[index]]||0));
+    row.querySelectorAll("input").forEach(input=>{
+      if(input!==activeInput) input.value=String(value);
+    });
+    const label=row.querySelector(".w-val");
+    if(label) label.textContent=value+"%";
+  });
+}
+
 function decoratePercentageInputs(container){
   if(!container) return;
   container.querySelectorAll(".split-percent-input").forEach(input=>{
@@ -875,8 +888,7 @@ function syncComcatSplit(key,value){
     });
   }
   if(activeInput){
-    const slider=activeInput.closest(".w-row")?.querySelector("input[type=range]");
-    if(slider) slider.value=String(target);
+    syncRenderedSplitRows("comcatSplitRows", entries.map(entry=>entry.key), S.comcatSplits, activeInput);
     return;
   }
   syncComcatSplitUi();
@@ -948,8 +960,7 @@ function syncPhaseSplit(key,value){
     });
   }
   if(activeInput){
-    const slider=activeInput.closest(".w-row")?.querySelector("input[type=range]");
-    if(slider) slider.value=String(target);
+    syncRenderedSplitRows("phaseSplitRows", phases.map(phase=>phase.name), S.phaseSplits, activeInput);
     return;
   }
   syncPhaseSplitUi();
@@ -1007,7 +1018,11 @@ function blendedCpm(rows){
   return (totalNet*1000)/totalViews;
 }
 function netAmount(row){ return Number((row&&row.net_amount)!=null?row.net_amount:row?.cost)||0; }
-function grossAmount(row){ return Number((row&&row.gross_amount)!=null?row.gross_amount:row?.cost)||0; }
+function grossAmount(row){
+  const net=netAmount(row);
+  const discount=Number(((row&&row.discount_pct)!=null?row.discount_pct:S.discountPct))||0;
+  return grossFromNetValue(net,discount);
+}
 function grossCpm(row){ return Number((row&&row.gross_cpm)!=null?row.gross_cpm:0)||0; }
 function netCpm(row){ return Number((row&&row.net_cpm)!=null?row.net_cpm:(row?.rate||0))||0; }
 function netRate(row){ return Number((row&&row.rate)!=null?row.rate:netCpm(row))||0; }
@@ -1350,8 +1365,7 @@ function syncBrandSplit(key,value){
     });
   }
   if(activeInput){
-    const slider=activeInput.closest(".w-row")?.querySelector("input[type=range]");
-    if(slider) slider.value=String(target);
+    syncRenderedSplitRows("brandSplitRows", brands, S.brandSplits, activeInput);
     return;
   }
   syncBrandSplitUi();
