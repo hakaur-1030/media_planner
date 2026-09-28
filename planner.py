@@ -2381,6 +2381,14 @@ def plan_media(
         comcat_name, share, _relevance = max(matches, key=lambda item: (item[2], item[1]))
         return (comcat_name, share)
 
+    def row_comcat_bucket_name(row: EditablePlanLine) -> str:
+        matches = [
+            (comcat_name, _row_relevance_for_comcat(row, comcat_name))
+            for comcat_name, _share in comcat_splits
+            if comcat_name and _row_relevance_for_comcat(row, comcat_name) > 0
+        ]
+        return max(matches, key=lambda item: item[1])[0] if matches else ""
+
     selected_phase_sequence = _weighted_phase_sequence(phases, phase_splits, len(selected_slot_key_list))
     selected_track_sequence = _weighted_track_sequence(req, len(selected_slot_key_list))
     selected_allocations: list[dict] = []
@@ -2560,8 +2568,7 @@ def plan_media(
         target_budget = (max(req.budget - spent_total, 0) / remaining_slots) * max(brand_share, 0.01)
         append_row(candidate, phase, selected_stype, selected_score, target_budget, force=True, brand_name=brand_name)
 
-    # CPM is continuously scalable, so use remaining inventory to close brand,
-    # phase, marketplace, and objective deficits before reporting the plan.  This also avoids leaving a
+    # CPM is continuously scalable, so use remaining inventory to close brand, category, phase, marketplace, and objective deficits before reporting the plan.  This also avoids leaving a
     # material budget remainder merely because the initial line quotas were met.
     topup_added = 0.0
     topup_iterations = 0
@@ -2575,6 +2582,7 @@ def plan_media(
         if remaining_budget <= 0:
             break
         brand_spend = defaultdict(float)
+        comcat_spend = defaultdict(float)
         phase_spend = defaultdict(float)
         marketplace_spend = defaultdict(float)
         objective_spend = defaultdict(float)
@@ -2583,12 +2591,14 @@ def plan_media(
                 continue
             row_spend = float(existing_row.cost or existing_row.net_amount or 0)
             brand_spend[existing_row.brand] += row_spend
+            comcat_spend[row_comcat_bucket_name(existing_row)] += row_spend
             phase_spend[existing_row.phase] += row_spend
             marketplace_spend[existing_row.marketplace] += row_spend
             objective_spend[existing_row.stype] += row_spend
 
         eligible_rows: list[tuple[float, EditablePlanLine, int, float, float]] = []
         brand_share_map = dict(brand_splits)
+        comcat_share_map = dict(comcat_splits)
         marketplace_share_map = dict(marketplace_splits)
         objective_share_map = {stype: share for stype, share, _score_name in _allocation_tracks(req)}
         for existing_row in rows:
@@ -2601,16 +2611,20 @@ def plan_media(
             slot_budget_remaining = round(max(maximum_slot_budget(req, existing_row.marketplace) - spent_by_slot[existing_slot_key], 0), 2)
             if remaining_views < 100 or net_cpm <= 0 or min(remaining_budget, slot_budget_remaining) + 1e-9 < net_cpm * 0.1:
                 continue
+            comcat_name = row_comcat_bucket_name(existing_row)
             brand_target = req.budget * brand_share_map.get(existing_row.brand, 0)
+            comcat_target = req.budget * comcat_share_map.get(comcat_name, 0)
             phase_target = req.budget * phase_splits.get(existing_row.phase, 0)
             marketplace_target = req.budget * marketplace_share_map.get(existing_row.marketplace, 0)
             objective_target = req.budget * objective_share_map.get(existing_row.stype, 0)
             brand_gap = brand_target - brand_spend[existing_row.brand]
+            comcat_gap = comcat_target - comcat_spend[comcat_name]
             phase_gap = phase_target - phase_spend[existing_row.phase]
             marketplace_gap = marketplace_target - marketplace_spend[existing_row.marketplace]
             objective_gap = objective_target - objective_spend[existing_row.stype]
             deficit_score = (
                 brand_gap / max(brand_target, 1.0)
+                + comcat_gap / max(comcat_target, 1.0)
                 + phase_gap / max(phase_target, 1.0)
                 + marketplace_gap / max(marketplace_target, 1.0)
                 + objective_gap / max(objective_target, 1.0)
@@ -2623,7 +2637,9 @@ def plan_media(
             eligible_rows,
             key=lambda item: (item[0], item[1].score, item[2]),
         )
+        comcat_name = row_comcat_bucket_name(row_to_grow)
         brand_target = req.budget * brand_share_map.get(row_to_grow.brand, 0)
+        comcat_target = req.budget * comcat_share_map.get(comcat_name, 0)
         phase_target = req.budget * phase_splits.get(row_to_grow.phase, 0)
         marketplace_target = req.budget * marketplace_share_map.get(row_to_grow.marketplace, 0)
         objective_target = req.budget * objective_share_map.get(row_to_grow.stype, 0)
@@ -2631,6 +2647,7 @@ def plan_media(
             gap
             for gap in (
                 brand_target - brand_spend[row_to_grow.brand],
+                comcat_target - comcat_spend[comcat_name],
                 phase_target - phase_spend[row_to_grow.phase],
                 marketplace_target - marketplace_spend[row_to_grow.marketplace],
                 objective_target - objective_spend[row_to_grow.stype],
