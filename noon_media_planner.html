@@ -521,7 +521,7 @@ td.mono{font-family:var(--mono);font-size:11px}
       <button class="btn ghost" onclick="addRow()">+ Add line</button>
       <button class="btn ghost" onclick="regeneratePlan()">Regenerate plan</button>
       <button class="btn ghost" onclick="copyPlanUiLink()">Copy plan link</button>
-      <button class="btn ghost" onclick="exportCsv()">Export CSV</button>
+      <button class="btn ghost" onclick="downloadPlanXlsx()">Download Excel</button>
       <button class="btn ghost" onclick="copyPlanForSheets()">Copy for Google Sheets</button>
       <button class="btn ghost" onclick="openPlanSummary('executive')">Executive summary</button>
       <button class="btn pri" onclick="openPlanSummary('detailed')">Detailed summary</button>
@@ -2992,10 +2992,12 @@ function openPlanSummary(mode='detailed'){
   // Totals strip for a set of rows.  Views count on-deck lines only, matching
   // the dash shown in the per-row cells for off-deck.
   const totalsRow=(cls,label,rows)=>{
+    // Sum the per-row values as they are displayed, so the printed column
+    // visibly adds up to its subtotal and matches the Excel export exactly.
     const v=rows.filter(r=>String(r.buyType||'').toUpperCase()!=='OFF-DECK')
-      .reduce((a,r)=>a+Number(r.views||0),0);
-    const g=rows.reduce((a,r)=>a+grossAmount(r),0);
-    const n=rows.reduce((a,r)=>a+netAmount(r),0);
+      .reduce((a,r)=>a+roundToNearestTen(r.views||0),0);
+    const g=rows.reduce((a,r)=>a+roundToNearestTen(grossAmount(r)),0);
+    const n=rows.reduce((a,r)=>a+roundToNearestTen(netAmount(r)),0);
     // An all-off-deck group carries no forecast views; a bare 0 would read as a
     // delivery of zero rather than "not applicable".
     const vt=v?views10(v):'-';
@@ -3157,44 +3159,6 @@ function openPlanSummary(mode='detailed'){
   win.focus();
 }
 
-function exportCsv(){
-  const headers=['from','to','country','marketplace','page','category','zone','dimension','asset','slot_code','days','buy_type','rate','gross_rate','net_rate','views','gross_amount_usd','net_amount_usd','phase','brand','note'];
-  const rows=S.rows.map(row=>[
-    row.from||'',
-    row.to||'',
-    displayCountryCode(row.country),
-    row.marketplace||'',
-    row.page||'',
-    row.category||'',
-    row.zone||'',
-    row.dimension||'',
-    row.asset||'',
-    row.slot_code||'',
-    row.days||0,
-    row.buyType||'',
-    rateText(netRate(row)),
-    rateText(grossRate(row)),
-    rateText(netRate(row)),
-    roundToNearestTen(row.views||0),
-    roundToNearestTen(grossAmount(row)),
-    roundToNearestTen(netAmount(row)),
-    row.phase||'',
-    row.brand||'',
-    row.note||''
-  ]);
-  const csv=[headers,...rows].map(cols=>cols.map(value=>`"${String(value??'').replace(/"/g,'""')}"`).join(',')).join('\n');
-  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url;
-  const codeSuffix=S.planCode?('_'+S.planCode.replace(/[^A-Za-z0-9_-]/g,'')):'';
-  a.download=((getSelectedBrandName()||'media_plan').trim().replace(/\s+/g,'_')||'media_plan')+codeSuffix+'.csv';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
 function planSummaryMetrics(){
   // Mirrors renderAll() so the exported block always matches the metric cards
   // shown above the plan table.
@@ -3211,56 +3175,233 @@ function planSummaryMetrics(){
   };
 }
 
+// Single structured description of the plan, shared by the Excel download and
+// the rich-text clipboard copy so the two exports can never drift apart.
+// Cells carry raw numbers, never formatted strings: Excel applies real number
+// formats and Sheets needs bare digits to treat a pasted cell as a number.
+function planExportModel(){
+  const cur=S.currency||'AED';
+  const fx=fxRate(cur);
+  const m=planSummaryMetrics();
+  const disc=Math.round(Number(S.discountPct||0));
+  const pct=m.netBudget?Math.min(Math.round(m.total/m.netBudget*100),100):0;
+  const onDeckCount=S.rows.filter(r=>String(r.buyType||'').toUpperCase()!=='OFF-DECK').length;
+  const onDeckPot=m.reachSpend+m.convSpend;
+  const reachPct=onDeckPot?Math.round(m.reachSpend/onDeckPot*100):0;
+  const cpm=m.totalViews?m.total/(m.totalViews/1000):0;
+  const brand=displaySelectedBrandNames();
+  const countries=displayCountries()||'-';
+  const n2=v=>Math.round((Number(v)||0)*100)/100;
+
+  const columns=[
+    {label:'From',type:'text'},
+    {label:'To',type:'text'},
+    {label:'Country',type:'text'},
+    {label:'Marketplace',type:'text'},
+    {label:'Page',type:'text'},
+    {label:'Category',type:'text'},
+    {label:'Zone',type:'text'},
+    {label:'Dimension',type:'text'},
+    {label:'Asset / Slot',type:'text'},
+    {label:'Slot code',type:'text'},
+    {label:'Days',type:'int'},
+    {label:'Buy type',type:'text'},
+    {label:'Gross rate',type:'rate'},
+    {label:'Net rate',type:'rate'},
+    {label:'Est. views',type:'int'},
+    {label:'Gross $',type:'usd'},
+    {label:'Net $',type:'usd'},
+    {label:'Net '+cur,type:'cur'},
+    {label:'Phase',type:'text'},
+    {label:'Brand',type:'text'},
+    {label:'Note',type:'text'}
+  ];
+  // Columns that carry money or volume, so subtotal rows know what to sum.
+  const sumCols=[14,15,16,17];
+
+  const cells=r=>{
+    const off=String(r.buyType||'').toUpperCase()==='OFF-DECK';
+    return [
+      r.from||'', r.to||'', displayCountryCode(r.country), (r.marketplace||'').toUpperCase(),
+      r.page||'', r.category||'', r.zone||'', r.dimension||'',
+      r.asset||'', r.slot_code||'', Number(r.days||0), r.buyType||'',
+      off?null:n2(grossRate(r)), off?null:n2(netRate(r)),
+      off?null:roundToNearestTen(r.views||0),
+      roundToNearestTen(grossAmount(r)), roundToNearestTen(netAmount(r)),
+      Math.round(netAmount(r)*fx),
+      r.phase||'', r.brand||'', r.note||''
+    ];
+  };
+
+  const order=[]; const byPhase=new Map();
+  S.rows.forEach(r=>{
+    const ph=r.phase||'Whole flight';
+    if(!byPhase.has(ph)){ byPhase.set(ph,[]); order.push(ph); }
+    byPhase.get(ph).push(r);
+  });
+  const subtotalOf=(label,rows)=>{
+    const out=new Array(columns.length).fill(null);
+    out[0]=label;
+    const vals=rows.map(cells);
+    sumCols.forEach(i=>{
+      const present=vals.map(c=>c[i]).filter(v=>v!=null);
+      // An all-off-deck group carries no forecast views; leaving the cell empty
+      // reads as "not applicable" where a 0 would read as zero delivery.
+      out[i]=present.length?present.reduce((a,v)=>a+v,0):null;
+    });
+    return out;
+  };
+  const groups=order.map((ph,i)=>{
+    const rows=byPhase.get(ph);
+    const net=rows.reduce((a,r)=>a+netAmount(r),0);
+    return {
+      name:ph,
+      share:m.total?Math.round(net/m.total*100):0,
+      count:rows.length,
+      net:Math.round(net),
+      rows:rows.map(cells),
+      subtotal:subtotalOf(ph+' subtotal',rows)
+    };
+  });
+
+  return {
+    filename:((brand||'media_plan').trim().replace(/\s+/g,'_'))
+      +(S.planCode?('_'+String(S.planCode).replace(/[^A-Za-z0-9_-]/g,'')):''),
+    title:brand+' — '+countries+' media plan',
+    subtitle:'A '+campaignDurationDays()+'-day activation across '+S.rows.length
+      +' placements · '+displayFlightRange(),
+    currency:cur,
+    meta:[
+      ['Media code',S.planCode||'-'],
+      ['Countries',countries],
+      ['Marketplace',(S.marketplace||'both').toUpperCase()],
+      ['Flight',displayFlightRange()],
+      ['Duration',campaignDurationDays()+' days'],
+      ['Discount',disc+'%']
+    ],
+    metrics:[
+      ['Gross budget',Math.round(m.grossBudget),'usd','Before discount'],
+      ['Net allocated',Math.round(m.total),'usd',pct+'% of net budget'],
+      ['Gross value',Math.round(m.grossTotal),'usd',disc+'% discount applied'],
+      ['Reach spend',Math.round(m.reachSpend),'usd',reachPct+'% of on-deck'],
+      ['Conversion spend',Math.round(m.convSpend),'usd',(100-reachPct)+'% of on-deck'],
+      ['Off-deck spend',Math.round(m.offdeckTotal),'usd','Whole-flight placements'],
+      ['Est. views',roundToNearestTen(m.totalViews),'int','On-deck lines only'],
+      ['Effective CPM',n2(cpm),'rate','Net cost per 1,000 views'],
+      ['Placements',S.rows.length,'int',onDeckCount+' on-deck, '+(S.rows.length-onDeckCount)+' off-deck'],
+      ['Net allocated ('+cur+')',Math.round(m.total*fx),'cur','Estimated at current FX']
+    ],
+    columns:columns,
+    groups:groups,
+    grand:subtotalOf('Total plan investment',S.rows)
+  };
+}
+
+async function downloadPlanXlsx(){
+  if(!S.rows||!S.rows.length){ alert('Generate a plan first.'); return; }
+  const model=planExportModel();
+  try{
+    const res=await fetch('/api/export/xlsx',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(model)
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const blob=await res.blob();
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download=model.filename+'.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }catch(err){
+    alert('Could not build the Excel file: '+err.message+'\n\nUse Copy for Google Sheets instead.');
+  }
+}
+
 async function copyPlanForSheets(){
   if(!S.rows||!S.rows.length){ alert('Generate a plan first.'); return; }
-  const m=planSummaryMetrics();
-  const cur=S.currency||'AED';
-  const pct=m.netBudget?Math.min(Math.round(m.total/m.netBudget*100),100):0;
-  const disc=Math.round(Number(S.discountPct||0));
-  const onDeckCount=S.rows.filter(r=>String(r.buyType||'').toUpperCase()!=='OFF-DECK').length;
-  // Tab-separated so a paste into Google Sheets lands in real cells.  Values stay
-  // unformatted (no symbols or separators) so Sheets reads them as numbers.
-  const cell=v=>String(v==null?'':v).replace(/[\t\r\n]+/g,' ').trim();
-  const line=cols=>cols.map(cell).join('\t');
-  const num=v=>Math.round((Number(v)||0)*100)/100;
-  const out=[];
-  out.push(line([displaySelectedBrandNames()+' — '+(displayCountries()||'')+' media plan']));
-  out.push(line(['Media code',S.planCode||'-','','Flight',displayFlightRange()]));
-  out.push(line(['Countries',displayCountries()||'-','','Duration',campaignDurationDays()+' days']));
-  out.push(line(['Marketplace',(S.marketplace||'both').toUpperCase(),'','Discount',disc+'%']));
-  out.push('');
-  out.push(line(['Metric','USD','Note']));
-  out.push(line(['Gross budget',Math.round(m.grossBudget),'Before discount']));
-  out.push(line(['Net allocated',Math.round(m.total),pct+'% of net budget']));
-  out.push(line(['Gross value',Math.round(m.grossTotal),disc+'% discount applied']));
-  out.push(line(['Reach spend',Math.round(m.reachSpend),(m.total?Math.round(m.reachSpend/m.total*100):0)+'% of allocation']));
-  out.push(line(['Conversion spend',Math.round(m.convSpend),(m.total?Math.round(m.convSpend/m.total*100):0)+'% of allocation']));
-  out.push(line(['Off-deck spend',Math.round(m.offdeckTotal),'Whole-flight placements']));
-  out.push(line(['Est. views',roundToNearestTen(m.totalViews),'On-deck lines only']));
-  out.push(line(['Effective CPM',m.totalViews?num(m.total/(m.totalViews/1000)):0,'Net cost per 1,000 views']));
-  out.push(line(['Placements',S.rows.length,onDeckCount+' on-deck, '+(S.rows.length-onDeckCount)+' off-deck']));
-  out.push(line(['Net allocated ('+cur+')',Math.round(m.total*fxRate(cur)),'Estimated at current FX']));
-  out.push('');
-  out.push(line(['From','To','Country','Marketplace','Page','Category','Zone','Dimension','Asset / Slot','Slot code','Days','Buy type','Gross rate','Net rate','Est. views','Gross $','Net $','Net '+cur,'Phase','Brand','Note']));
-  S.rows.forEach(r=>{
-    const off=String(r.buyType||'').toUpperCase()==='OFF-DECK';
-    out.push(line([
-      r.from||'', r.to||'', displayCountryCode(r.country), r.marketplace||'',
-      r.page||'', r.category||'', r.zone||'', r.dimension||'',
-      r.asset||'', r.slot_code||'', r.days||0, r.buyType||'',
-      off?'':num(grossRate(r)), off?'':num(netRate(r)), off?'':roundToNearestTen(r.views||0),
-      roundToNearestTen(grossAmount(r)), roundToNearestTen(netAmount(r)),
-      Math.round(netAmount(r)*fxRate(cur)),
-      r.phase||'', r.brand||'', r.note||''
-    ]));
+  const model=planExportModel();
+  const cols=model.columns;
+  const esc=v=>String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const plain=v=>String(v==null?'':v).replace(/[\t\r\n]+/g,' ').trim();
+  const isNum=t=>t==='int'||t==='usd'||t==='cur'||t==='rate';
+
+  // Google Sheets honours inline styles on a pasted HTML table, so the sheet
+  // arrives formatted.  A plain-text TSV goes on the clipboard alongside it as
+  // the fallback flavour for editors that ignore text/html.
+  const tsv=[]; const html=[];
+  const PH=['#1A5FD4','#C43F8A','#1A8F5A','#C47A1A','#5B4BC4','#8A8F9C'];
+  const TINT=['#EDF3FD','#FBEDF5','#EAF6F0','#FDF4E8','#F0EEFB','#F2F3F5'];
+  const span=cols.length;
+  html.push('<table border="0" cellspacing="0" cellpadding="4" style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:10pt">');
+
+  const hrow=(text,style)=>{
+    html.push('<tr><td colspan="'+span+'" style="'+style+'">'+esc(text)+'</td></tr>');
+    tsv.push(plain(text));
+  };
+  hrow(model.title,'font-size:15pt;font-weight:bold;color:#141821;padding:8px 6px');
+  hrow(model.subtitle,'font-size:9pt;color:#5B6472;padding:0 6px 8px');
+
+  model.meta.forEach(([k,v])=>{
+    html.push('<tr><td style="font-weight:bold;color:#5B6472;background:#F4F6F9">'+esc(k)
+      +'</td><td colspan="'+(span-1)+'">'+esc(v)+'</td></tr>');
+    tsv.push(plain(k)+'\t'+plain(v));
   });
-  const tsv=out.join('\n');
+  html.push('<tr><td colspan="'+span+'" style="height:8px"></td></tr>'); tsv.push('');
+
+  html.push('<tr><td colspan="3" style="background:#1F2633;color:#fff;font-weight:bold">Metric</td>'
+    +'<td style="background:#1F2633;color:#fff;font-weight:bold;text-align:right">Value</td>'
+    +'<td colspan="'+(span-4)+'" style="background:#1F2633;color:#fff;font-weight:bold">Note</td></tr>');
+  tsv.push('Metric\tValue\tNote');
+  model.metrics.forEach(([label,value,type,note])=>{
+    html.push('<tr><td colspan="3" style="font-weight:bold;background:#F4F6F9">'+esc(label)+'</td>'
+      +'<td style="text-align:right;background:#F4F6F9">'+esc(value)+'</td>'
+      +'<td colspan="'+(span-4)+'" style="color:#5B6472;background:#F4F6F9">'+esc(note)+'</td></tr>');
+    tsv.push(plain(label)+'\t'+plain(value)+'\t'+plain(note));
+  });
+  html.push('<tr><td colspan="'+span+'" style="height:8px"></td></tr>'); tsv.push('');
+
+  html.push('<tr>'+cols.map(c=>'<th style="background:#1F2633;color:#fff;font-weight:bold;text-align:'
+    +(isNum(c.type)?'right':'left')+';border:1px solid #2B3447">'+esc(c.label)+'</th>').join('')+'</tr>');
+  tsv.push(cols.map(c=>plain(c.label)).join('\t'));
+
+  model.groups.forEach((grp,gi)=>{
+    const accent=PH[gi%PH.length], tint=TINT[gi%TINT.length];
+    html.push('<tr><td colspan="'+span+'" style="background:'+tint+';color:'+accent
+      +';font-weight:bold;border-left:3px solid '+accent+'">'
+      +esc(grp.name+'  —  '+grp.count+' placement'+(grp.count===1?'':'s')+'  ·  '+grp.share+'% of plan')+'</td></tr>');
+    tsv.push(plain(grp.name+' — '+grp.count+' placements · '+grp.share+'% of plan'));
+
+    grp.rows.forEach((row,ri)=>{
+      html.push('<tr>'+row.map((v,i)=>'<td style="background:'+(ri%2?'#FAFBFC':'#FFFFFF')
+        +';text-align:'+(isNum(cols[i].type)?'right':'left')+';border:1px solid #E1E5EC">'
+        +esc(v==null?'':v)+'</td>').join('')+'</tr>');
+      tsv.push(row.map(plain).join('\t'));
+    });
+    html.push('<tr>'+grp.subtotal.map((v,i)=>'<td style="background:#F4F6F9;font-weight:bold;text-align:'
+      +(isNum(cols[i].type)?'right':'left')+';border:1px solid #E1E5EC">'+esc(v==null?'':v)+'</td>').join('')+'</tr>');
+    tsv.push(grp.subtotal.map(plain).join('\t'));
+  });
+  html.push('<tr>'+model.grand.map((v,i)=>'<td style="background:#FFCF33;font-weight:bold;text-align:'
+    +(isNum(cols[i].type)?'right':'left')+';border:1px solid #F5B814">'+esc(v==null?'':v)+'</td>').join('')+'</tr>');
+  tsv.push(model.grand.map(plain).join('\t'));
+  html.push('</table>');
+
+  const htmlText=html.join(''), tsvText=tsv.join('\n');
   try{
-    if(navigator.clipboard && navigator.clipboard.writeText){
-      await navigator.clipboard.writeText(tsv);
+    if(window.ClipboardItem && navigator.clipboard && navigator.clipboard.write){
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html':new Blob([htmlText],{type:'text/html'}),
+        'text/plain':new Blob([tsvText],{type:'text/plain'})
+      })]);
+    }else if(navigator.clipboard && navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(tsvText);
     }else{
       const area=document.createElement('textarea');
-      area.value=tsv;
+      area.value=tsvText;
       area.style.position='fixed';
       area.style.opacity='0';
       document.body.appendChild(area);
@@ -3268,9 +3409,9 @@ async function copyPlanForSheets(){
       document.execCommand('copy');
       area.remove();
     }
-    alert('Plan copied with the summary metrics.\n\nOpen a blank Google Sheet, click cell A1 and paste (Cmd+V / Ctrl+V).');
+    alert('Plan copied with formatting.\n\nOpen a blank Google Sheet, click cell A1 and paste (Cmd+V / Ctrl+V).');
   }catch(_){
-    alert('Copy was blocked by the browser. Use Export CSV instead.');
+    alert('Copy was blocked by the browser. Use Download Excel instead.');
   }
 }
 

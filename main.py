@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import logging
+import re
 import time
 from uuid import uuid4
 from datetime import date
@@ -13,7 +15,7 @@ from urllib.request import urlopen
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from bigquery_repository import BigQueryRepository
@@ -665,3 +667,155 @@ def get_media_plan(plan_id: str, repo: BigQueryRepository = Depends(get_repo)):
 
 
 app.mount("/static", StaticFiles(directory="."), name="static")
+
+
+# --- Excel export -----------------------------------------------------------
+# The browser posts the structured plan built by planExportModel(); this turns
+# it into a styled workbook. Cells arrive as raw numbers so real Excel number
+# formats can be applied here rather than baking currency into strings.
+
+_XLSX_HEAD_FILL = "FF1F2633"
+_XLSX_BAND_FILL = "FFF4F6F9"
+_XLSX_GRAND_FILL = "FFFFCF33"
+_XLSX_PHASE_TINTS = ["FFEDF3FD", "FFFBEDF5", "FFEAF6F0", "FFFDF4E8", "FFF0EEFB", "FFF2F3F5"]
+_XLSX_PHASE_ACCENTS = ["FF1A5FD4", "FFC43F8A", "FF1A8F5A", "FFC47A1A", "FF5B4BC4", "FF8A8F9C"]
+
+
+def _xlsx_number_format(col_type: str, currency: str) -> str | None:
+    if col_type == "usd":
+        return '"$"#,##0'
+    if col_type == "cur":
+        return f'"{currency} "#,##0'
+    if col_type == "rate":
+        return '#,##0.00'
+    if col_type == "int":
+        return '#,##0'
+    return None
+
+
+@app.post("/api/export/xlsx")
+def export_xlsx(model: dict):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError as exc:  # pragma: no cover - depends on deployment image
+        raise HTTPException(status_code=500, detail=f"openpyxl is not installed: {exc}") from exc
+
+    columns = model.get("columns") or []
+    if not columns:
+        raise HTTPException(status_code=400, detail="No columns supplied.")
+    currency = str(model.get("currency") or "USD")
+    ncol = len(columns)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Media plan"
+
+    thin = Side(style="thin", color="FFE1E5EC")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    row_at = 1
+
+    def put(row, col, value, *, bold=False, size=10, colour="FF141821",
+            fill=None, fmt=None, align=None, boxed=False):
+        cell = ws.cell(row=row, column=col, value=value)
+        cell.font = Font(name="Arial", size=size, bold=bold, color=colour)
+        if fill:
+            cell.fill = PatternFill("solid", fgColor=fill)
+        if fmt:
+            cell.number_format = fmt
+        if align:
+            cell.alignment = Alignment(horizontal=align, vertical="center")
+        if boxed:
+            cell.border = border
+        return cell
+
+    def merge(row, text, **kw):
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=ncol)
+        put(row, 1, text, **kw)
+
+    merge(row_at, model.get("title") or "Media plan", bold=True, size=16)
+    ws.row_dimensions[row_at].height = 24
+    row_at += 1
+    if model.get("subtitle"):
+        merge(row_at, model["subtitle"], size=9, colour="FF5B6472")
+        row_at += 1
+    row_at += 1
+
+    for label, value in model.get("meta") or []:
+        put(row_at, 1, label, bold=True, colour="FF5B6472", fill=_XLSX_BAND_FILL)
+        put(row_at, 2, value)
+        row_at += 1
+    row_at += 1
+
+    for header, span_from, span_to in (("Metric", 1, 3), ("Value", 4, 4), ("Note", 5, ncol)):
+        ws.merge_cells(start_row=row_at, start_column=span_from, end_row=row_at, end_column=span_to)
+        put(row_at, span_from, header, bold=True, colour="FFFFFFFF", fill=_XLSX_HEAD_FILL,
+            align="right" if header == "Value" else "left")
+    row_at += 1
+    for label, value, mtype, note in model.get("metrics") or []:
+        ws.merge_cells(start_row=row_at, start_column=1, end_row=row_at, end_column=3)
+        put(row_at, 1, label, bold=True, fill=_XLSX_BAND_FILL)
+        put(row_at, 4, value, fill=_XLSX_BAND_FILL, align="right",
+            fmt=_xlsx_number_format(mtype, currency))
+        ws.merge_cells(start_row=row_at, start_column=5, end_row=row_at, end_column=ncol)
+        put(row_at, 5, note, colour="FF5B6472", fill=_XLSX_BAND_FILL)
+        row_at += 1
+    row_at += 1
+
+    header_row = row_at
+    for idx, col in enumerate(columns, start=1):
+        numeric = col.get("type") in ("int", "usd", "cur", "rate")
+        put(header_row, idx, col.get("label") or "", bold=True, size=9, colour="FFFFFFFF",
+            fill=_XLSX_HEAD_FILL, align="right" if numeric else "left", boxed=True)
+    ws.row_dimensions[header_row].height = 22
+    row_at += 1
+
+    def write_cells(values, *, fill=None, bold=False):
+        for idx, raw in enumerate(values, start=1):
+            col = columns[idx - 1]
+            numeric = col.get("type") in ("int", "usd", "cur", "rate")
+            put(row_at, idx, raw, bold=bold, size=9, fill=fill, boxed=True,
+                align="right" if numeric else "left",
+                fmt=_xlsx_number_format(col.get("type"), currency) if numeric else None)
+
+    for gi, group in enumerate(model.get("groups") or []):
+        tint = _XLSX_PHASE_TINTS[gi % len(_XLSX_PHASE_TINTS)]
+        accent = _XLSX_PHASE_ACCENTS[gi % len(_XLSX_PHASE_ACCENTS)]
+        label = (
+            f"{group.get('name')}  —  {group.get('count')} "
+            f"placement{'' if group.get('count') == 1 else 's'}  ·  {group.get('share')}% of plan"
+        )
+        merge(row_at, label, bold=True, colour=accent, fill=tint)
+        row_at += 1
+        for ri, row_values in enumerate(group.get("rows") or []):
+            write_cells(row_values, fill="FFFAFBFC" if ri % 2 else "FFFFFFFF")
+            row_at += 1
+        write_cells(group.get("subtotal") or [], fill=_XLSX_BAND_FILL, bold=True)
+        row_at += 1
+
+    if model.get("grand"):
+        write_cells(model["grand"], fill=_XLSX_GRAND_FILL, bold=True)
+        row_at += 1
+
+    # Freeze under the column headers and size each column to its content so the
+    # sheet is readable the moment it opens.
+    ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
+    ws.auto_filter.ref = f"A{header_row}:{get_column_letter(ncol)}{header_row}"
+    for idx, col in enumerate(columns, start=1):
+        widest = len(str(col.get("label") or ""))
+        for group in model.get("groups") or []:
+            for row_values in group.get("rows") or []:
+                if idx - 1 < len(row_values):
+                    widest = max(widest, len(str(row_values[idx - 1] or "")))
+        ws.column_dimensions[get_column_letter(idx)].width = min(max(widest + 2, 9), 42)
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    filename = re.sub(r"[^A-Za-z0-9_.-]", "_", str(model.get("filename") or "media_plan"))
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.xlsx"'},
+    )
