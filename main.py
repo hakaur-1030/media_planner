@@ -798,6 +798,16 @@ def export_xlsx(model: dict):
         write_cells(model["grand"], fill=_XLSX_GRAND_FILL, bold=True)
         row_at += 1
 
+    # The same caveat the printed summary closes with, so a partner who is sent
+    # the workbook instead of the PDF is told why the CPD rows have no views.
+    if model.get("footnote"):
+        row_at += 1
+        ws.merge_cells(start_row=row_at, start_column=1, end_row=row_at, end_column=ncol)
+        cell = put(row_at, 1, model["footnote"], size=9, colour="FF3A4252")
+        cell.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
+        ws.row_dimensions[row_at].height = 28
+        row_at += 1
+
     # No frozen panes: the sheet is a deliverable to read and reshare, not a
     # console to scroll, and a split pane gets in the way when it is pasted on
     # or re-exported. Size each column to its content instead.

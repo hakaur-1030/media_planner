@@ -2940,7 +2940,6 @@ function openPlanSummary(mode='detailed'){
   const grossTotal=m.grossTotal;
   const totalViews=m.totalViews;
   const netBudget=m.netBudget;
-  const grossBudget=m.grossBudget;
   const duration=campaignDurationDays();
   const flightRange=displayFlightRange();
   const mediaCode=S.planCode||S.planId||'-';
@@ -3160,7 +3159,7 @@ function openPlanSummary(mode='detailed'){
         <div class="sectitle">Placement schedule</div>
         <div class="tablecard"><div class="table-scroll"><table><thead>${tableHead}</thead><tbody>${tableRows}</tbody></table></div></div>
       </div>
-      <div class="foot">Gross budget ${money2(grossBudget,'USD')} &middot; ${disc}% discount applied &middot; ${money2(total,'USD')} net allocated (${util}% of the ${money2(netBudget,'USD')} net budget) &middot; ${cur} values estimated at the current FX rate. CPD placements are priced per day, not per impression, so they carry no view forecast and are excluded from the view totals. Impressions are forecasts, not guarantees.</div>
+      <div class="foot">${planFootnote()}</div>
     </div>
   </body></html>`);
   win.document.close();
@@ -3184,6 +3183,21 @@ function planSummaryMetrics(){
     netBudget:netBudgetBase(),
     grossBudget:S.totalBudget||grossBudgetBase()
   };
+}
+
+// The caveat line that closes every deliverable. Shared by the printed summary
+// and the Excel download so a partner reading one is told exactly what a
+// partner reading the other is told.
+function planFootnote(){
+  const cur=S.currency||'AED';
+  const m=planSummaryMetrics();
+  const disc=Math.round(Number(S.discountPct||0));
+  const util=m.netBudget?Math.min(Math.round(m.total/m.netBudget*100),100):0;
+  return `Gross budget ${money2(m.grossBudget,'USD')} · ${disc}% discount applied · `
+    +`${money2(m.total,'USD')} net allocated (${util}% of the ${money2(m.netBudget,'USD')} net budget) · `
+    +`${cur} values estimated at the current FX rate. CPD placements are priced per day, `
+    +`not per impression, so they carry no view forecast and are excluded from the view totals. `
+    +`Impressions are forecasts, not guarantees.`;
 }
 
 // Single structured description of the plan, shared by the Excel download and
@@ -3304,7 +3318,8 @@ function planExportModel(){
     ],
     columns:columns,
     groups:groups,
-    grand:subtotalOf('Total plan investment',S.rows)
+    grand:subtotalOf('Total plan investment',S.rows),
+    footnote:planFootnote()
   };
 }
 
@@ -3399,6 +3414,14 @@ async function copyPlanForSheets(){
   html.push('<tr>'+model.grand.map((v,i)=>'<td style="background:#FFCF33;font-weight:bold;text-align:'
     +(isNum(cols[i].type)?'right':'left')+';border:1px solid #F5B814">'+esc(v==null?'':v)+'</td>').join('')+'</tr>');
   tsv.push(model.grand.map(plain).join('\t'));
+  if(model.footnote){
+    // Same closing caveat as the PDF and the workbook, so all three exports
+    // explain the blank CPD view cells rather than leaving them unexplained.
+    html.push('<tr><td colspan="'+span+'" style="padding-top:8px;color:#3A4252;font-size:9px">'
+      +esc(model.footnote)+'</td></tr>');
+    tsv.push('');
+    tsv.push(plain(model.footnote));
+  }
   html.push('</table>');
 
   const htmlText=html.join(''), tsvText=tsv.join('\n');
