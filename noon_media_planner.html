@@ -3121,7 +3121,9 @@ function openPlanSummary(mode='detailed'){
     tr.subtot td{background:#F4F6F9;font-weight:700;font-size:${isExec?'9px':'8px'};color:#3A4252;border-bottom:1px solid #E1E5EC;white-space:nowrap}
     tr.grand td{background:linear-gradient(90deg,#FFCF33,#F5B814);font-weight:700;font-size:${isExec?'10.5px':'9.5px'};border:none;padding:8px 5px;color:#141821;white-space:nowrap}
 
-    .foot{padding:5mm 12mm 0;font-size:7.5px;color:#7A8290;line-height:1.5}
+    /* Dark enough to read as a deliberate note rather than greyed-out filler —
+       it carries the discount basis and the CPD caveat, which partners ask about. */
+    .foot{padding:5mm 12mm 0;font-size:7.5px;color:#3A4252;line-height:1.5}
 
     /* Print rules last so they win the cascade over the screen rules above. */
     @media print{
@@ -3158,7 +3160,7 @@ function openPlanSummary(mode='detailed'){
         <div class="sectitle">Placement schedule</div>
         <div class="tablecard"><div class="table-scroll"><table><thead>${tableHead}</thead><tbody>${tableRows}</tbody></table></div></div>
       </div>
-      <div class="foot">Gross budget ${money2(grossBudget,'USD')} &middot; ${disc}% discount applied &middot; ${money2(total,'USD')} net allocated (${util}% of the ${money2(netBudget,'USD')} net budget) &middot; ${cur} values estimated at the current FX rate. Impressions are forecasts, not guarantees.</div>
+      <div class="foot">Gross budget ${money2(grossBudget,'USD')} &middot; ${disc}% discount applied &middot; ${money2(total,'USD')} net allocated (${util}% of the ${money2(netBudget,'USD')} net budget) &middot; ${cur} values estimated at the current FX rate. CPD placements are priced per day, not per impression, so they carry no view forecast and are excluded from the view totals. Impressions are forecasts, not guarantees.</div>
     </div>
   </body></html>`);
   win.document.close();
