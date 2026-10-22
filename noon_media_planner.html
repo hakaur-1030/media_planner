@@ -1011,6 +1011,13 @@ function dateRangeDurationDays(startValue,endValue){
 function campaignDurationDays(){
   return dateRangeDurationDays(S.flightStart,S.flightEnd);
 }
+// Only impression-priced lines carry a view forecast. CPD buys a slot for a
+// number of days and OFF-DECK is a whole-flight send, so neither is tied to
+// views and both report a dash rather than a number in any export.
+function viewsBacked(row){
+  const type=String((row&&row.buyType)||'').toUpperCase();
+  return type!=='CPD' && type!=='OFF-DECK';
+}
 function netAmount(row){ return Number((row&&row.net_amount)!=null?row.net_amount:row?.cost)||0; }
 function grossAmount(row){
   const net=netAmount(row);
@@ -2939,7 +2946,7 @@ function openPlanSummary(mode='detailed'){
   const mediaCode=S.planCode||S.planId||'-';
   const disc=Math.round(Number(S.discountPct||0));
   const util=netBudget?Math.min(Math.round(total/netBudget*100),100):0;
-  const cpm=totalViews?total/(totalViews/1000):0;
+  const cpm=totalViews?m.viewsSpend/(totalViews/1000):0;
   const onDeckCount=S.rows.filter(row=>String(row.buyType||'').toUpperCase()!=='OFF-DECK').length;
   // Split the on-deck pot only, so the two shares sum to 100.  Measured against
   // total net they would silently omit the off-deck remainder.
@@ -2964,7 +2971,7 @@ function openPlanSummary(mode='detailed'){
     <td>${displayCountryCode(row.country)}</td>
     <td>${row.buyType||''}</td>
     <td class="n">${off?'-':rateText(row.rate||0)}</td>
-    <td class="n">${off?'-':views10(row.views||0)}</td>
+    <td class="n">${viewsBacked(row)?views10(row.views||0):'-'}</td>
     <td class="n">${money2(grossAmount(row),'USD')}</td>
     <td class="n">${money2(netAmount(row),'USD')}</td>`
       : `<td>${row.from||''}</td>
@@ -2980,7 +2987,7 @@ function openPlanSummary(mode='detailed'){
     <td class="n">${off?'-':rateText(netRate(row))}</td>
     <td class="n">${off?'-':rateMoney(grossRate(row),'USD')}</td>
     <td class="n">${off?'-':rateMoney(netRate(row),'USD')}</td>
-    <td class="n">${off?'-':views10(row.views||0)}</td>
+    <td class="n">${viewsBacked(row)?views10(row.views||0):'-'}</td>
     <td class="n">${money2(grossAmount(row),'USD')}</td>
     <td class="n">${money2(netAmount(row),'USD')}</td>
     <td class="n">${money2(netAmount(row)*fxRate(cur),cur)}</td>
@@ -2994,8 +3001,7 @@ function openPlanSummary(mode='detailed'){
   const totalsRow=(cls,label,rows)=>{
     // Sum the per-row values as they are displayed, so the printed column
     // visibly adds up to its subtotal and matches the Excel export exactly.
-    const v=rows.filter(r=>String(r.buyType||'').toUpperCase()!=='OFF-DECK')
-      .reduce((a,r)=>a+roundToNearestTen(r.views||0),0);
+    const v=rows.filter(viewsBacked).reduce((a,r)=>a+roundToNearestTen(r.views||0),0);
     const g=rows.reduce((a,r)=>a+roundToNearestTen(grossAmount(r)),0);
     const n=rows.reduce((a,r)=>a+roundToNearestTen(netAmount(r)),0);
     // An all-off-deck group carries no forecast views; a bare 0 would read as a
@@ -3034,7 +3040,7 @@ function openPlanSummary(mode='detailed'){
   const kpis=[
     kpi('Total investment',money2(total,'USD'),money2(total*fxRate(cur),cur)+' est.',true),
     kpi('Gross media value',money2(grossTotal,'USD'),disc+'% partner discount applied'),
-    kpi('Estimated impressions',compactViews(totalViews),'On-deck placements'),
+    kpi('Estimated impressions',compactViews(totalViews),'Impression-priced lines'),
     // rateMoney, not money2: money2 rounds to the nearest 10, which would
     // collapse a $14.48 CPM to $10.
     kpi('Effective CPM',rateMoney(cpm,'USD'),'Net cost per 1,000 views'),
@@ -3167,7 +3173,10 @@ function planSummaryMetrics(){
     total:S.rows.reduce((a,r)=>a+netAmount(r),0),
     grossTotal:S.rows.reduce((a,r)=>a+grossAmount(r),0),
     offdeckTotal:S.rows.filter(r=>String(r.buyType||'').toUpperCase()==='OFF-DECK').reduce((a,r)=>a+netAmount(r),0),
-    totalViews:onDeck.filter(r=>r.views).reduce((a,r)=>a+Number(r.views||0),0),
+    totalViews:S.rows.filter(viewsBacked).reduce((a,r)=>a+Number(r.views||0),0),
+    // Spend on the impression-priced lines only, so the effective CPM divides
+    // like-for-like instead of charging CPD and off-deck cost to CPM views.
+    viewsSpend:S.rows.filter(viewsBacked).reduce((a,r)=>a+netAmount(r),0),
     reachSpend:onDeck.filter(r=>r.stype==='reach').reduce((a,r)=>a+netAmount(r),0),
     convSpend:onDeck.filter(r=>r.stype==='conv').reduce((a,r)=>a+netAmount(r),0),
     netBudget:netBudgetBase(),
@@ -3188,7 +3197,7 @@ function planExportModel(){
   const onDeckCount=S.rows.filter(r=>String(r.buyType||'').toUpperCase()!=='OFF-DECK').length;
   const onDeckPot=m.reachSpend+m.convSpend;
   const reachPct=onDeckPot?Math.round(m.reachSpend/onDeckPot*100):0;
-  const cpm=m.totalViews?m.total/(m.totalViews/1000):0;
+  const cpm=m.totalViews?m.viewsSpend/(m.totalViews/1000):0;
   const brand=displaySelectedBrandNames();
   const countries=displayCountries()||'-';
   const n2=v=>Math.round((Number(v)||0)*100)/100;
@@ -3226,7 +3235,7 @@ function planExportModel(){
       r.page||'', r.category||'', r.zone||'', r.dimension||'',
       r.asset||'', r.slot_code||'', Number(r.days||0), r.buyType||'',
       off?null:n2(grossRate(r)), off?null:n2(netRate(r)),
-      off?null:roundToNearestTen(r.views||0),
+      viewsBacked(r)?roundToNearestTen(r.views||0):null,
       roundToNearestTen(grossAmount(r)), roundToNearestTen(netAmount(r)),
       Math.round(netAmount(r)*fx),
       r.phase||'', r.brand||'', r.note||''
@@ -3286,7 +3295,7 @@ function planExportModel(){
       ['Reach spend',Math.round(m.reachSpend),'usd',reachPct+'% of on-deck'],
       ['Conversion spend',Math.round(m.convSpend),'usd',(100-reachPct)+'% of on-deck'],
       ['Off-deck spend',Math.round(m.offdeckTotal),'usd','Whole-flight placements'],
-      ['Est. views',roundToNearestTen(m.totalViews),'int','On-deck lines only'],
+      ['Est. views',roundToNearestTen(m.totalViews),'int','Impression-priced lines only'],
       ['Effective CPM',n2(cpm),'rate','Net cost per 1,000 views'],
       ['Placements',S.rows.length,'int',onDeckCount+' on-deck, '+(S.rows.length-onDeckCount)+' off-deck'],
       ['Net allocated ('+cur+')',Math.round(m.total*fx),'cur','Estimated at current FX']
