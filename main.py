@@ -798,9 +798,9 @@ def export_xlsx(model: dict):
         write_cells(model["grand"], fill=_XLSX_GRAND_FILL, bold=True)
         row_at += 1
 
-    # Freeze under the column headers and size each column to its content so the
-    # sheet is readable the moment it opens.
-    ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
+    # No frozen panes: the sheet is a deliverable to read and reshare, not a
+    # console to scroll, and a split pane gets in the way when it is pasted on
+    # or re-exported. Size each column to its content instead.
     ws.auto_filter.ref = f"A{header_row}:{get_column_letter(ncol)}{header_row}"
     for idx, col in enumerate(columns, start=1):
         widest = len(str(col.get("label") or ""))
