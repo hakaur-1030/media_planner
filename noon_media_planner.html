@@ -1011,13 +1011,6 @@ function dateRangeDurationDays(startValue,endValue){
 function campaignDurationDays(){
   return dateRangeDurationDays(S.flightStart,S.flightEnd);
 }
-function blendedCpm(rows){
-  const cpmRows=(rows||[]).filter(row=>String(row.buyType||'').toUpperCase()==='CPM');
-  const totalNet=cpmRows.reduce((sum,row)=>sum+netAmount(row),0);
-  const totalViews=cpmRows.reduce((sum,row)=>sum+Number(row.views||0),0);
-  if(totalViews<=0) return 0;
-  return (totalNet*1000)/totalViews;
-}
 function netAmount(row){ return Number((row&&row.net_amount)!=null?row.net_amount:row?.cost)||0; }
 function grossAmount(row){
   const net=netAmount(row);
@@ -2935,45 +2928,34 @@ function openPlanSummary(mode='detailed'){
   const cur=S.currency||'AED';
   const brand=displaySelectedBrandNames();
   const countries=displayCountries()||'-';
-  const total=S.rows.reduce((sum,row)=>sum+netAmount(row),0);
-  const grossTotal=S.rows.reduce((sum,row)=>sum+grossAmount(row),0);
-  const onDeckRows=S.rows.filter(row=>String(row.buyType||'').toUpperCase()!=='OFF-DECK');
-  const totalViews=onDeckRows.reduce((sum,row)=>sum+Number(row.views||0),0);
-  const netBudget=netBudgetBase();
-  const grossBudget=S.totalBudget||grossBudgetBase();
+  const m=planSummaryMetrics();
+  const total=m.total;
+  const grossTotal=m.grossTotal;
+  const totalViews=m.totalViews;
+  const netBudget=m.netBudget;
+  const grossBudget=m.grossBudget;
   const duration=campaignDurationDays();
   const flightRange=displayFlightRange();
-  const campaignCpm=blendedCpm(S.rows);
   const mediaCode=S.planCode||S.planId||'-';
-  const detailedRows=S.rows.map(row=>{
-    const isOffdeck=String(row.buyType||'').toUpperCase()==='OFF-DECK';
-    return `<tr>
-    <td>${row.from||''}</td>
-    <td>${row.to||''}</td>
-    <td>${displayCountryCode(row.country)}</td>
-    <td>${(row.marketplace||'').toUpperCase()}</td>
-    <td>${row.page||''}</td>
-    <td>${row.zone||''}</td>
-    <td>${row.dimension||''}</td>
-    <td>${displaySlotName(row)}<div style="font-size:10px;color:#666">${row.slot_code||''}</div></td>
-    <td style="text-align:center">${row.days||0}</td>
-    <td>${row.buyType||''}</td>
-    <td style="text-align:right">${isOffdeck?'-':rateText(netRate(row))}</td>
-    <td style="text-align:right">${isOffdeck?'-':rateMoney(grossRate(row),'USD')}</td>
-    <td style="text-align:right">${isOffdeck?'-':rateMoney(netRate(row),'USD')}</td>
-    <td style="text-align:right">${isOffdeck?'-':views10(row.views||0)}</td>
-    <td style="text-align:right">${money2(grossAmount(row),'USD')}</td>
-    <td style="text-align:right">${money2(netAmount(row),'USD')}</td>
-    <td style="text-align:right">${money2(netAmount(row)*fxRate(cur),cur)}</td>
-    <td>${row.phase||''}</td>
-    <td>${row.brand||''}</td>
-    <td>${row.note||''}</td>
-  </tr>`;
-  }).join('');
-  const executiveRows=S.rows.map(row=>{
-    const isOffdeck=String(row.buyType||'').toUpperCase()==='OFF-DECK';
-    return `<tr>
-    <td>${row.from||''}</td>
+  const disc=Math.round(Number(S.discountPct||0));
+  const util=netBudget?Math.min(Math.round(total/netBudget*100),100):0;
+  const cpm=totalViews?total/(totalViews/1000):0;
+  const onDeckCount=S.rows.filter(row=>String(row.buyType||'').toUpperCase()!=='OFF-DECK').length;
+  // Split the on-deck pot only, so the two shares sum to 100.  Measured against
+  // total net they would silently omit the off-deck remainder.
+  const onDeckPot=m.reachSpend+m.convSpend;
+  const reachPct=onDeckPot?Math.round(m.reachSpend/onDeckPot*100):0;
+
+  const isExec=mode==='executive';
+  const NCOL=isExec?12:20;
+  const tableHead=isExec
+    ? `<tr><th>From</th><th>To</th><th>Asset / Slot</th><th>Page</th><th>Dimension</th><th>Marketplace</th><th>Country</th><th>Buy Type</th><th>Net Rate</th><th>Est. views</th><th>Gross Cost</th><th>Net Cost</th></tr>`
+    : `<tr><th>From</th><th>To</th><th>Country</th><th>Marketplace</th><th>Page</th><th>Zone</th><th>Dimension</th><th>Asset / Slot</th><th>Days</th><th>Buy type</th><th>Rate</th><th>Gross Rate</th><th>Net Rate</th><th>Est. views</th><th>Gross $</th><th>Net $</th><th>Net ${currencySymbol(cur).trim()}</th><th>Phase</th><th>Brand</th><th>Note</th></tr>`;
+
+  const rowCells=row=>{
+    const off=String(row.buyType||'').toUpperCase()==='OFF-DECK';
+    return isExec
+      ? `<td>${row.from||''}</td>
     <td>${row.to||''}</td>
     <td>${displaySlotName(row)}</td>
     <td>${row.page||''}</td>
@@ -2981,120 +2963,195 @@ function openPlanSummary(mode='detailed'){
     <td>${(row.marketplace||'').toUpperCase()}</td>
     <td>${displayCountryCode(row.country)}</td>
     <td>${row.buyType||''}</td>
-    <td style="text-align:right">${isOffdeck?'-':rateText(row.rate||0)}</td>
-    <td style="text-align:right">${isOffdeck?'-':views10(row.views||0)}</td>
-    <td style="text-align:right">${money2(grossAmount(row),'USD')}</td>
-    <td style="text-align:right">${money2(netAmount(row),'USD')}</td>
-  </tr>`;
-  }).join('');
-  const tableHead=mode==='executive'
-    ? `<tr><th>From</th><th>To</th><th>Asset / Slot</th><th>Page</th><th>Dimension</th><th>Marketplace</th><th>Country</th><th>Buy Type</th><th>Net Rate</th><th>Est. views</th><th>Gross Cost</th><th>Net Cost</th></tr>`
-    : `<tr><th>From</th><th>To</th><th>Country</th><th>Marketplace</th><th>Page</th><th>Zone</th><th>Dimension</th><th>Asset / Slot</th><th>Days</th><th>Buy type</th><th>Rate</th><th>Gross Rate</th><th>Net Rate</th><th>Est. views</th><th>Gross $</th><th>Net $</th><th>Net ${currencySymbol(cur).trim()}</th><th>Phase</th><th>Brand</th><th>Note</th></tr>`;
-  const tableRows=mode==='executive'?executiveRows:detailedRows;
+    <td class="n">${off?'-':rateText(row.rate||0)}</td>
+    <td class="n">${off?'-':views10(row.views||0)}</td>
+    <td class="n">${money2(grossAmount(row),'USD')}</td>
+    <td class="n">${money2(netAmount(row),'USD')}</td>`
+      : `<td>${row.from||''}</td>
+    <td>${row.to||''}</td>
+    <td>${displayCountryCode(row.country)}</td>
+    <td>${(row.marketplace||'').toUpperCase()}</td>
+    <td>${row.page||''}</td>
+    <td>${row.zone||''}</td>
+    <td>${row.dimension||''}</td>
+    <td>${displaySlotName(row)}<div class="slotcode">${row.slot_code||''}</div></td>
+    <td class="c">${row.days||0}</td>
+    <td>${row.buyType||''}</td>
+    <td class="n">${off?'-':rateText(netRate(row))}</td>
+    <td class="n">${off?'-':rateMoney(grossRate(row),'USD')}</td>
+    <td class="n">${off?'-':rateMoney(netRate(row),'USD')}</td>
+    <td class="n">${off?'-':views10(row.views||0)}</td>
+    <td class="n">${money2(grossAmount(row),'USD')}</td>
+    <td class="n">${money2(netAmount(row),'USD')}</td>
+    <td class="n">${money2(netAmount(row)*fxRate(cur),cur)}</td>
+    <td>${row.phase||''}</td>
+    <td>${row.brand||''}</td>
+    <td>${row.note||''}</td>`;
+  };
+
+  // Totals strip for a set of rows.  Views count on-deck lines only, matching
+  // the dash shown in the per-row cells for off-deck.
+  const totalsRow=(cls,label,rows)=>{
+    const v=rows.filter(r=>String(r.buyType||'').toUpperCase()!=='OFF-DECK')
+      .reduce((a,r)=>a+Number(r.views||0),0);
+    const g=rows.reduce((a,r)=>a+grossAmount(r),0);
+    const n=rows.reduce((a,r)=>a+netAmount(r),0);
+    // An all-off-deck group carries no forecast views; a bare 0 would read as a
+    // delivery of zero rather than "not applicable".
+    const vt=v?views10(v):'-';
+    return isExec
+      ? `<tr class="${cls}"><td colspan="9">${label}</td><td class="n">${vt}</td><td class="n">${money2(g,'USD')}</td><td class="n">${money2(n,'USD')}</td></tr>`
+      : `<tr class="${cls}"><td colspan="13">${label}</td><td class="n">${vt}</td><td class="n">${money2(g,'USD')}</td><td class="n">${money2(n,'USD')}</td><td class="n">${money2(n*fxRate(cur),cur)}</td><td colspan="3"></td></tr>`;
+  };
+
+  // Phase accent / background-wash pairs, cycled so any number of phases works.
+  const PHC=[['#1A5FD4','#EDF3FD'],['#C43F8A','#FBEDF5'],['#1A8F5A','#EAF6F0'],['#C47A1A','#FDF4E8'],['#5B4BC4','#F0EEFB'],['#8A8F9C','#F2F3F5']];
+  const phaseOrder=[];
+  const byPhase=new Map();
+  S.rows.forEach(row=>{
+    const ph=row.phase||'Whole flight';
+    if(!byPhase.has(ph)){ byPhase.set(ph,[]); phaseOrder.push(ph); }
+    byPhase.get(ph).push(row);
+  });
+  const tableRows=phaseOrder.map((ph,i)=>{
+    const rows=byPhase.get(ph);
+    const [accent,tint]=PHC[i%PHC.length];
+    const net=rows.reduce((a,r)=>a+netAmount(r),0);
+    const pct=total?Math.round(net/total*100):0;
+    const band=`<tr class="phband"><td colspan="${NCOL}" style="background:${tint};box-shadow:inset 3px 0 0 ${accent}">`
+      +`<span class="dot" style="background:${accent}"></span>`
+      +`<span class="phname">${ph}</span>`
+      +`<span class="phmeta">${rows.length} placement${rows.length===1?'':'s'} &middot; ${money2(net,'USD')}</span>`
+      +`<span class="meter"><i style="width:${pct}%;background:${accent}"></i></span>`
+      +`<span class="phpct">${pct}% of plan</span></td></tr>`;
+    const lines=rows.map(r=>`<tr class="line">${rowCells(r)}</tr>`).join('');
+    return band+lines+totalsRow('subtot',ph+' subtotal',rows);
+  }).join('')+totalsRow('grand','Total plan investment',S.rows);
+
+  const kpi=(label,value,sub,hero)=>`<div class="kpi${hero?' hero':''}"><div class="klab">${label}</div><div class="kval">${value}</div><div class="ksub">${sub}</div></div>`;
+  const kpis=[
+    kpi('Total investment',money2(total,'USD'),money2(total*fxRate(cur),cur)+' est.',true),
+    kpi('Gross media value',money2(grossTotal,'USD'),disc+'% partner discount applied'),
+    kpi('Estimated impressions',compactViews(totalViews),'On-deck placements'),
+    // rateMoney, not money2: money2 rounds to the nearest 10, which would
+    // collapse a $14.48 CPM to $10.
+    kpi('Effective CPM',rateMoney(cpm,'USD'),'Net cost per 1,000 views'),
+    kpi('Placements',String(S.rows.length),onDeckCount+' on-deck &middot; '+(S.rows.length-onDeckCount)+' off-deck'),
+    kpi('Reach / conversion',reachPct+' / '+(100-reachPct),money2(m.reachSpend,'USD')+' &middot; '+money2(m.convSpend,'USD')),
+    kpi('Budget utilisation',util+'%','of '+money2(netBudget,'USD')+' net budget')
+  ].join('');
+
   // In print every cell is nowrap so dates, rates and amounts never split
   // mid-token.  Only these wide free-text columns are allowed to wrap.
-  const printWrapCols=(mode==='executive'?[3,4,5]:[5,7,8,18,20])
+  const printWrapCols=(isExec?[3,4,5]:[5,7,8,18,20])
     .map(n=>`td:nth-child(${n})`).join(',');
-  const summaryCards=mode==='executive'
-    ? `
-      <div class="sumcard"><div class="sumlabel">Total CPM</div><div class="sumvalue">${money2(campaignCpm,'USD')}</div><div class="sumsub">Blended net CPM</div></div>
-      <div class="sumcard"><div class="sumlabel">Campaign Duration</div><div class="sumvalue">${duration} days</div><div class="sumsub">${S.flightStart||'-'} to ${S.flightEnd||'-'}</div></div>
-      <div class="sumcard"><div class="sumlabel">Est. Views</div><div class="sumvalue">${compactViews(totalViews)}</div><div class="sumsub">Rounded to nearest 10</div></div>
-      <div class="sumcard"><div class="sumlabel">Gross Cost</div><div class="sumvalue">${money2(grossTotal,'USD')}</div><div class="sumsub">Before discounting</div></div>
-      <div class="sumcard"><div class="sumlabel">Net Cost</div><div class="sumvalue">${money2(total,'USD')}</div><div class="sumsub">${cur!=='USD'?money2(total*fxRate(cur),cur):'USD view'}</div></div>
-    `
-    : `
-      <div class="sumcard"><div class="sumlabel">Media Code</div><div class="sumvalue code">${mediaCode}</div><div class="sumsub">Generated reference</div></div>
-      <div class="sumcard"><div class="sumlabel">Gross Budget</div><div class="sumvalue">${money2(grossBudget,'USD')}</div><div class="sumsub">${money2(grossBudget*fxRate(cur),cur)} est.</div></div>
-      <div class="sumcard"><div class="sumlabel">Discount</div><div class="sumvalue">${Math.round(Number(S.discountPct||0))}%</div><div class="sumsub">Applied on slot-data rates</div></div>
-      <div class="sumcard"><div class="sumlabel">Gross Value</div><div class="sumvalue">${money2(grossTotal,'USD')}</div><div class="sumsub">Before discounting</div></div>
-      <div class="sumcard"><div class="sumlabel">Net Value</div><div class="sumvalue">${money2(total,'USD')}</div><div class="sumsub">${money2(total*fxRate(cur),cur)} est. of ${money2(netBudget,'USD')} net budget</div></div>
-    `;
-  const win=window.open('','_blank','width=1280,height=900');
+
+  const win=window.open('','_blank','width=1400,height=900');
   if(!win) return;
-  win.document.write(`<!DOCTYPE html><html><head><title>${mode==='executive'?'Executive Summary':'Detailed Summary'}</title><style>
-    :root{--ink:#1f2128;--muted:#636875;--gold:#ffcf33;--line:#e7dba9}
-    *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-    @page{size:landscape;margin:8mm}
-    body{font-family:'DM Sans',sans-serif;padding:28px;color:var(--ink);background:#fffef9}
-    .summary-actions{position:sticky;top:0;z-index:2;display:flex;justify-content:flex-end;gap:8px;padding:0 0 14px;background:#fffef9}
-    .summary-actions button{border:1px solid #d9c87c;border-radius:9px;background:#fff;padding:8px 12px;cursor:pointer;font:600 13px 'DM Sans',sans-serif;color:var(--ink)}
-    .summary-actions button.primary{background:#ffcf33;border-color:#ffcf33}
-    .printbrand{display:flex;align-items:center;justify-content:center;margin-bottom:16px;padding:10px 18px}
-    .printbrand img{display:block;max-height:56px;max-width:240px;object-fit:contain}
-    .header{margin-bottom:20px;padding:22px 24px;border:1px solid var(--line);border-radius:24px;background:linear-gradient(135deg,#1f2128 0,#343946 100%);box-shadow:0 18px 40px rgba(31,33,40,.12);color:#fff}
-    h1{font-size:30px;margin:0 0 10px;color:#fff;letter-spacing:-.03em}
-    .meta-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:12px}
-    .meta-item{padding:10px 12px;border-radius:16px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1)}
-    .meta-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.65);font-weight:700;margin-bottom:4px}
-    .meta-value{font-size:16px;font-weight:700;color:#fff}
-    .meta-sub{font-size:12px;color:rgba(255,255,255,.72);margin-top:4px}
-    .summary{display:grid;grid-template-columns:repeat(${mode==='executive'?5:5},1fr);gap:12px;margin:18px 0 20px}
-    .sumcard{border:1px solid var(--line);border-radius:18px;padding:14px 16px;background:#fff;box-shadow:0 6px 18px rgba(31,33,40,.05)}
-    .sumlabel{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700;margin-bottom:6px}
-    .sumvalue{font-size:22px;font-weight:700;color:var(--ink)}
-    .sumvalue.code{font-size:18px}
-    .sumsub{font-size:12px;color:var(--muted);margin-top:3px}
-    .table-scroll{width:100%;overflow:auto;border:1px solid var(--line);border-radius:18px;background:#fff}
-    table{width:max-content;min-width:${mode==='executive'?'1350px':'2450px'};border-collapse:separate;border-spacing:0;font-size:${mode==='executive'?'12px':'11px'}}
-    th,td{padding:9px 10px;vertical-align:top;border-bottom:1px solid #eee7cb}
-    th{background:linear-gradient(180deg,#fff4c0,#ffefaa);text-align:left;color:#2f333e;font-size:10px;letter-spacing:.05em;text-transform:uppercase}
-    tbody tr:nth-child(even) td{background:#fffdf6}
-    tbody tr:nth-child(odd) td{background:#fff}
-    tbody tr:last-child td{border-bottom:none}
+  win.document.write(`<!DOCTYPE html><html><head><title>${isExec?'Executive Summary':'Detailed Summary'} &ndash; ${brand}</title><style>
+    *{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box}
+    /* Margin 0 so the white masthead and the dark metrics band run full bleed to
+       the paper edge.  All inset comes from .head / .metrics / .body padding. */
+    @page{size:A3 landscape;margin:0}
+    body{margin:0;font-family:'DM Sans',sans-serif;color:#141821;background:#E6EAF1}
+    /* min-height so the page tint reaches the foot of the sheet rather than
+       stopping at the last row of content. */
+    .page{background:#E6EAF1;padding-bottom:9mm;min-height:297mm}
+    .summary-actions{position:sticky;top:0;z-index:5;display:flex;justify-content:flex-end;gap:8px;padding:10px 12mm;background:#fff;border-bottom:1px solid #E1E5EC}
+    .summary-actions button{border:1px solid #D9DEE7;border-radius:9px;background:#fff;padding:8px 12px;cursor:pointer;font:600 13px 'DM Sans',sans-serif;color:#141821}
+    .summary-actions button.primary{background:#FFCF33;border-color:#FFCF33}
+
+    /* The noon ads mark is dark type plus a dark "ads" badge, so it only sits
+       naturally on a light ground.  The masthead is therefore white and the dark
+       treatment moves to the metrics band below it. */
+    .head{background:#fff;padding:9mm 12mm 7mm}
+    .mast{display:flex;justify-content:space-between;align-items:flex-end;gap:30px}
+    .logo{height:21px;display:block;margin-bottom:10px}
+    .kicker{font-size:7.5px;letter-spacing:.2em;text-transform:uppercase;color:#9A7B0A;font-weight:700}
+    h1{font-size:27px;margin:4px 0 6px;letter-spacing:-.03em;font-weight:700;color:#141821;line-height:1.05}
+    .tag{margin:0;font-size:9.5px;color:#5B6472;max-width:640px;line-height:1.55}
+    .flight{text-align:right;flex:none}
+    .flight .fl{font-size:7px;letter-spacing:.14em;text-transform:uppercase;color:#9099A8;font-weight:700}
+    .flight .fv{font-size:12px;font-weight:700;color:#141821;margin:2px 0 7px}
+
+    /* Full-bleed dark metrics band.  This is the pitch moment: the numbers the
+       partner is being asked to approve, in display type, before the detail. */
+    .metrics{background:linear-gradient(112deg,#121620 0%,#1E2533 55%,#2B3447 100%);padding:7mm 12mm;border-top:3px solid #FFCF33;border-bottom:3px solid #FFCF33}
+    .kpis{display:grid;grid-template-columns:1.25fr repeat(6,1fr)}
+    .kpi{padding:0 13px;border-left:1px solid rgba(255,255,255,.13)}
+    .kpi:first-child{padding-left:0;border-left:none}
+    .klab{font-size:7px;letter-spacing:.14em;text-transform:uppercase;color:#8E97A8;font-weight:700}
+    .kval{font-size:21px;font-weight:700;letter-spacing:-.03em;margin:5px 0 3px;color:#fff}
+    .ksub{font-size:7.5px;color:#7F8899;line-height:1.4}
+    .kpi.hero .klab{color:#FFCF33}
+    .kpi.hero .kval{font-size:27px;color:#FFCF33}
+
+    .body{padding:7mm 12mm 0}
+    .sectitle{font-size:8px;letter-spacing:.16em;text-transform:uppercase;color:#5B6472;font-weight:700;margin:0 0 6px;display:flex;align-items:center;gap:8px}
+    .sectitle::before{content:"";width:16px;height:3px;background:#FFCF33;border-radius:2px}
+
+    /* The schedule sits in its own white card on the tinted page. */
+    .tablecard{background:#fff;border:1px solid #E1E5EC;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(20,24,33,.08)}
+    .table-scroll{width:100%;overflow:auto}
+    table{width:max-content;min-width:100%;border-collapse:separate;border-spacing:0;font-size:${isExec?'10px':'8px'}}
+    th{font-size:${isExec?'7.5px':'7px'};letter-spacing:.07em;text-transform:uppercase;text-align:left;color:#C8CFDB;background:#1F2633;padding:7px 5px;white-space:nowrap;font-weight:700}
+    td{padding:5px;vertical-align:top;border-bottom:1px solid #EDF0F4;color:#293040}
+    td.n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+    td.c{text-align:center}
+    .slotcode{font-size:${isExec?'8px':'6.5px'};color:#8B93A1;margin-top:1px}
+    tbody tr.line:nth-of-type(even) td{background:#FAFBFC}
+
+    tr.phband td{padding:6px 9px;font-size:${isExec?'9px':'8px'};font-weight:700;border-bottom:1px solid #E1E5EC;white-space:nowrap}
+    tr.phband .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:7px;vertical-align:1px}
+    tr.phband .phname{color:#141821}
+    tr.phband .phmeta{font-weight:600;color:#5B6472;margin-left:10px}
+    /* Share-of-plan meter inline in the band, so the budget split is visible at a
+       glance without a separate chart. */
+    tr.phband .meter{display:inline-block;width:90px;height:5px;background:#DDE2EA;border-radius:3px;overflow:hidden;margin:0 7px 0 11px;vertical-align:middle}
+    tr.phband .meter i{display:block;height:100%;border-radius:3px}
+    tr.phband .phpct{font-weight:700;color:#5B6472}
+    tr.subtot td{background:#F4F6F9;font-weight:700;font-size:${isExec?'9px':'8px'};color:#3A4252;border-bottom:1px solid #E1E5EC;white-space:nowrap}
+    tr.grand td{background:linear-gradient(90deg,#FFCF33,#F5B814);font-weight:700;font-size:${isExec?'10.5px':'9.5px'};border:none;padding:8px 5px;color:#141821;white-space:nowrap}
+
+    .foot{padding:5mm 12mm 0;font-size:7.5px;color:#7A8290;line-height:1.5}
+
     /* Print rules last so they win the cascade over the screen rules above. */
     @media print{
       thead{display:table-header-group}
       tr{break-inside:avoid;page-break-inside:avoid}
       .summary-actions{display:none}
-      body{padding:0;background:#fff}
       /* .table-scroll is a horizontal scroll box on screen.  Print has no
-         scrolling, so overflow:auto CLIPS everything past the page edge and
-         the trailing columns (Est. views onward) silently vanish from the PDF.
-         Release the scroll box and let the table reflow to the page width so
-         every column survives the export. */
-      .table-scroll{overflow:visible;border:none;border-radius:0}
-      table{min-width:0;width:100%;font-size:${mode==='executive'?'9px':'7px'}}
-      th,td{padding:3px 4px}
+         scrolling, so overflow:auto CLIPS everything past the page edge and the
+         trailing columns silently vanish from the PDF.  Release the scroll box
+         and let the table reflow to the page width so every column survives. */
+      .table-scroll{overflow:visible}
+      table{width:100%;min-width:0}
       td{white-space:nowrap}
       ${printWrapCols}{white-space:normal;overflow-wrap:anywhere;word-break:break-word}
-      th{font-size:${mode==='executive'?'8px':'6px'};letter-spacing:.02em;white-space:nowrap}
-      /* The header block and metric cards are sized for a 1280px screen.  Left
-         alone they dwarf the shrunk-to-fit table and the page reads as two
-         documents.  Scale the whole masthead onto the same type ramp as the
-         table: label 6px / value 12px / title 15px. */
-      .header,.sumcard{box-shadow:none}
-      .printbrand{margin-bottom:6px;padding:0;justify-content:flex-start}
-      .printbrand img{max-height:22px;max-width:94px}
-      .header{margin-bottom:8px;padding:10px 12px;border-radius:10px}
-      h1{font-size:15px;margin:0 0 6px;letter-spacing:-.02em}
-      .meta-grid{gap:6px;margin-top:6px}
-      .meta-item{padding:5px 7px;border-radius:7px}
-      .meta-label{font-size:6px;margin-bottom:2px;letter-spacing:.05em}
-      .meta-value{font-size:9px}
-      .meta-sub{font-size:6px;margin-top:2px}
-      .summary{gap:6px;margin:8px 0}
-      .sumcard{padding:6px 8px;border-radius:8px}
-      .sumlabel{font-size:6px;margin-bottom:2px;letter-spacing:.05em}
-      .sumvalue{font-size:12px}
-      .sumvalue.code{font-size:11px}
-      .sumsub{font-size:6px;margin-top:1px}
     }
   </style></head><body>
     <div class="summary-actions"><button type="button" onclick="window.close()">Close</button><button class="primary" type="button" onclick="window.print()">Download PDF</button></div>
-    <div class="printbrand"><img src="/static/logo.png" alt="noon ads logo"></div>
-    <div class="header">
-      <h1>${brand}</h1>
-      <div class="meta-grid">
-        <div class="meta-item"><div class="meta-label">Brand</div><div class="meta-value">${brand}</div></div>
-        <div class="meta-item"><div class="meta-label">Countries</div><div class="meta-value">${countries||'-'}</div></div>
-        <div class="meta-item"><div class="meta-label">Campaign Duration</div><div class="meta-value">${duration} days</div><div class="meta-sub">${flightRange}</div></div>
-        <div class="meta-item"><div class="meta-label">Marketplace</div><div class="meta-value">${(S.marketplace||'both').toUpperCase()}</div></div>
-        <div class="meta-item"><div class="meta-label">Discount</div><div class="meta-value">${Math.round(Number(S.discountPct||0))}%</div></div>
+    <div class="page">
+      <div class="head"><div class="mast">
+        <div>
+          <img class="logo" src="/static/logo.png" alt="noon ads">
+          <div class="kicker">${isExec?'Executive summary':'Media plan'} &middot; ${countries}</div>
+          <h1>${brand} &times; noon</h1>
+          <p class="tag">A ${duration}-day ${countries} activation across ${S.rows.length} placements, weighted ${reachPct}% to reach and ${100-reachPct}% to conversion, delivering an estimated ${compactViews(totalViews)} impressions at a ${rateMoney(cpm,'USD')} effective CPM.</p>
+        </div>
+        <div class="flight">
+          <div class="fl">Flight</div><div class="fv">${flightRange}</div>
+          <div class="fl">Media code</div><div class="fv">${mediaCode}</div>
+          <div class="fl">Marketplace</div><div class="fv">${(S.marketplace||'both').toUpperCase()}</div>
+        </div>
+      </div></div>
+      <div class="metrics"><div class="kpis">${kpis}</div></div>
+      <div class="body">
+        <div class="sectitle">Placement schedule</div>
+        <div class="tablecard"><div class="table-scroll"><table><thead>${tableHead}</thead><tbody>${tableRows}</tbody></table></div></div>
       </div>
+      <div class="foot">Gross budget ${money2(grossBudget,'USD')} &middot; ${disc}% discount applied &middot; ${money2(total,'USD')} net allocated (${util}% of the ${money2(netBudget,'USD')} net budget) &middot; ${cur} values estimated at the current FX rate. Impressions are forecasts, not guarantees.</div>
     </div>
-    <div class="summary">${summaryCards}</div>
-    <div class="table-scroll"><table><thead>${tableHead}</thead><tbody>${tableRows}</tbody></table></div>
   </body></html>`);
   win.document.close();
   win.focus();
