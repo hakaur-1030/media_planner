@@ -522,6 +522,7 @@ td.mono{font-family:var(--mono);font-size:11px}
       <button class="btn ghost" onclick="regeneratePlan()">Regenerate plan</button>
       <button class="btn ghost" onclick="copyPlanUiLink()">Copy plan link</button>
       <button class="btn ghost" onclick="exportCsv()">Export CSV</button>
+      <button class="btn ghost" onclick="copyPlanForSheets()">Copy for Google Sheets</button>
       <button class="btn ghost" onclick="openPlanSummary('executive')">Executive summary</button>
       <button class="btn pri" onclick="openPlanSummary('detailed')">Detailed summary</button>
     </div>
@@ -2990,6 +2991,10 @@ function openPlanSummary(mode='detailed'){
     ? `<tr><th>From</th><th>To</th><th>Asset / Slot</th><th>Page</th><th>Dimension</th><th>Marketplace</th><th>Country</th><th>Buy Type</th><th>Net Rate</th><th>Est. views</th><th>Gross Cost</th><th>Net Cost</th></tr>`
     : `<tr><th>From</th><th>To</th><th>Country</th><th>Marketplace</th><th>Page</th><th>Zone</th><th>Dimension</th><th>Asset / Slot</th><th>Days</th><th>Buy type</th><th>Rate</th><th>Gross Rate</th><th>Net Rate</th><th>Est. views</th><th>Gross $</th><th>Net $</th><th>Net ${currencySymbol(cur).trim()}</th><th>Phase</th><th>Brand</th><th>Note</th></tr>`;
   const tableRows=mode==='executive'?executiveRows:detailedRows;
+  // In print every cell is nowrap so dates, rates and amounts never split
+  // mid-token.  Only these wide free-text columns are allowed to wrap.
+  const printWrapCols=(mode==='executive'?[3,4,5]:[5,7,8,18,20])
+    .map(n=>`td:nth-child(${n})`).join(',');
   const summaryCards=mode==='executive'
     ? `
       <div class="sumcard"><div class="sumlabel">Total CPM</div><div class="sumvalue">${money2(campaignCpm,'USD')}</div><div class="sumsub">Blended net CPM</div></div>
@@ -2999,7 +3004,7 @@ function openPlanSummary(mode='detailed'){
       <div class="sumcard"><div class="sumlabel">Net Cost</div><div class="sumvalue">${money2(total,'USD')}</div><div class="sumsub">${cur!=='USD'?money2(total*fxRate(cur),cur):'USD view'}</div></div>
     `
     : `
-      <div class="sumcard"><div class="sumlabel">Media Code</div><div class="sumvalue" style="font-size:18px">${mediaCode}</div><div class="sumsub">Generated reference</div></div>
+      <div class="sumcard"><div class="sumlabel">Media Code</div><div class="sumvalue code">${mediaCode}</div><div class="sumsub">Generated reference</div></div>
       <div class="sumcard"><div class="sumlabel">Gross Budget</div><div class="sumvalue">${money2(grossBudget,'USD')}</div><div class="sumsub">${money2(grossBudget*fxRate(cur),cur)} est.</div></div>
       <div class="sumcard"><div class="sumlabel">Discount</div><div class="sumvalue">${Math.round(Number(S.discountPct||0))}%</div><div class="sumsub">Applied on slot-data rates</div></div>
       <div class="sumcard"><div class="sumlabel">Gross Value</div><div class="sumvalue">${money2(grossTotal,'USD')}</div><div class="sumsub">Before discounting</div></div>
@@ -3010,8 +3015,7 @@ function openPlanSummary(mode='detailed'){
   win.document.write(`<!DOCTYPE html><html><head><title>${mode==='executive'?'Executive Summary':'Detailed Summary'}</title><style>
     :root{--ink:#1f2128;--muted:#636875;--gold:#ffcf33;--line:#e7dba9}
     *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-    @page{size:landscape;margin:12mm}
-    @media print{thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}}
+    @page{size:landscape;margin:8mm}
     body{font-family:'DM Sans',sans-serif;padding:28px;color:var(--ink);background:#fffef9}
     .summary-actions{position:sticky;top:0;z-index:2;display:flex;justify-content:flex-end;gap:8px;padding:0 0 14px;background:#fffef9}
     .summary-actions button{border:1px solid #d9c87c;border-radius:9px;background:#fff;padding:8px 12px;cursor:pointer;font:600 13px 'DM Sans',sans-serif;color:var(--ink)}
@@ -3024,10 +3028,12 @@ function openPlanSummary(mode='detailed'){
     .meta-item{padding:10px 12px;border-radius:16px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1)}
     .meta-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.65);font-weight:700;margin-bottom:4px}
     .meta-value{font-size:16px;font-weight:700;color:#fff}
+    .meta-sub{font-size:12px;color:rgba(255,255,255,.72);margin-top:4px}
     .summary{display:grid;grid-template-columns:repeat(${mode==='executive'?5:5},1fr);gap:12px;margin:18px 0 20px}
     .sumcard{border:1px solid var(--line);border-radius:18px;padding:14px 16px;background:#fff;box-shadow:0 6px 18px rgba(31,33,40,.05)}
     .sumlabel{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700;margin-bottom:6px}
     .sumvalue{font-size:22px;font-weight:700;color:var(--ink)}
+    .sumvalue.code{font-size:18px}
     .sumsub{font-size:12px;color:var(--muted);margin-top:3px}
     .table-scroll{width:100%;overflow:auto;border:1px solid var(--line);border-radius:18px;background:#fff}
     table{width:max-content;min-width:${mode==='executive'?'1350px':'2450px'};border-collapse:separate;border-spacing:0;font-size:${mode==='executive'?'12px':'11px'}}
@@ -3036,15 +3042,53 @@ function openPlanSummary(mode='detailed'){
     tbody tr:nth-child(even) td{background:#fffdf6}
     tbody tr:nth-child(odd) td{background:#fff}
     tbody tr:last-child td{border-bottom:none}
+    /* Print rules last so they win the cascade over the screen rules above. */
+    @media print{
+      thead{display:table-header-group}
+      tr{break-inside:avoid;page-break-inside:avoid}
+      .summary-actions{display:none}
+      body{padding:0;background:#fff}
+      /* .table-scroll is a horizontal scroll box on screen.  Print has no
+         scrolling, so overflow:auto CLIPS everything past the page edge and
+         the trailing columns (Est. views onward) silently vanish from the PDF.
+         Release the scroll box and let the table reflow to the page width so
+         every column survives the export. */
+      .table-scroll{overflow:visible;border:none;border-radius:0}
+      table{min-width:0;width:100%;font-size:${mode==='executive'?'9px':'7px'}}
+      th,td{padding:3px 4px}
+      td{white-space:nowrap}
+      ${printWrapCols}{white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+      th{font-size:${mode==='executive'?'8px':'6px'};letter-spacing:.02em;white-space:nowrap}
+      /* The header block and metric cards are sized for a 1280px screen.  Left
+         alone they dwarf the shrunk-to-fit table and the page reads as two
+         documents.  Scale the whole masthead onto the same type ramp as the
+         table: label 6px / value 12px / title 15px. */
+      .header,.sumcard{box-shadow:none}
+      .printbrand{margin-bottom:6px;padding:0;justify-content:flex-start}
+      .printbrand img{max-height:22px;max-width:94px}
+      .header{margin-bottom:8px;padding:10px 12px;border-radius:10px}
+      h1{font-size:15px;margin:0 0 6px;letter-spacing:-.02em}
+      .meta-grid{gap:6px;margin-top:6px}
+      .meta-item{padding:5px 7px;border-radius:7px}
+      .meta-label{font-size:6px;margin-bottom:2px;letter-spacing:.05em}
+      .meta-value{font-size:9px}
+      .meta-sub{font-size:6px;margin-top:2px}
+      .summary{gap:6px;margin:8px 0}
+      .sumcard{padding:6px 8px;border-radius:8px}
+      .sumlabel{font-size:6px;margin-bottom:2px;letter-spacing:.05em}
+      .sumvalue{font-size:12px}
+      .sumvalue.code{font-size:11px}
+      .sumsub{font-size:6px;margin-top:1px}
+    }
   </style></head><body>
-    <div class="summary-actions"><button type="button" onclick="window.close()">Close</button><button class="primary" type="button" onclick="window.print()">Print</button></div>
+    <div class="summary-actions"><button type="button" onclick="window.close()">Close</button><button class="primary" type="button" onclick="window.print()">Download PDF</button></div>
     <div class="printbrand"><img src="/static/logo.png" alt="noon ads logo"></div>
     <div class="header">
       <h1>${brand}</h1>
       <div class="meta-grid">
         <div class="meta-item"><div class="meta-label">Brand</div><div class="meta-value">${brand}</div></div>
         <div class="meta-item"><div class="meta-label">Countries</div><div class="meta-value">${countries||'-'}</div></div>
-        <div class="meta-item"><div class="meta-label">Campaign Duration</div><div class="meta-value">${duration} days</div><div style="font-size:12px;color:rgba(255,255,255,.72);margin-top:4px">${flightRange}</div></div>
+        <div class="meta-item"><div class="meta-label">Campaign Duration</div><div class="meta-value">${duration} days</div><div class="meta-sub">${flightRange}</div></div>
         <div class="meta-item"><div class="meta-label">Marketplace</div><div class="meta-value">${(S.marketplace||'both').toUpperCase()}</div></div>
         <div class="meta-item"><div class="meta-label">Discount</div><div class="meta-value">${Math.round(Number(S.discountPct||0))}%</div></div>
       </div>
@@ -3092,6 +3136,85 @@ function exportCsv(){
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+function planSummaryMetrics(){
+  // Mirrors renderAll() so the exported block always matches the metric cards
+  // shown above the plan table.
+  const onDeck=S.rows.filter(r=>String(r.buyType||'').toUpperCase()!=='OFF-DECK');
+  return {
+    total:S.rows.reduce((a,r)=>a+netAmount(r),0),
+    grossTotal:S.rows.reduce((a,r)=>a+grossAmount(r),0),
+    offdeckTotal:S.rows.filter(r=>String(r.buyType||'').toUpperCase()==='OFF-DECK').reduce((a,r)=>a+netAmount(r),0),
+    totalViews:onDeck.filter(r=>r.views).reduce((a,r)=>a+Number(r.views||0),0),
+    reachSpend:onDeck.filter(r=>r.stype==='reach').reduce((a,r)=>a+netAmount(r),0),
+    convSpend:onDeck.filter(r=>r.stype==='conv').reduce((a,r)=>a+netAmount(r),0),
+    netBudget:netBudgetBase(),
+    grossBudget:S.totalBudget||grossBudgetBase()
+  };
+}
+
+async function copyPlanForSheets(){
+  if(!S.rows||!S.rows.length){ alert('Generate a plan first.'); return; }
+  const m=planSummaryMetrics();
+  const cur=S.currency||'AED';
+  const pct=m.netBudget?Math.min(Math.round(m.total/m.netBudget*100),100):0;
+  const disc=Math.round(Number(S.discountPct||0));
+  const onDeckCount=S.rows.filter(r=>String(r.buyType||'').toUpperCase()!=='OFF-DECK').length;
+  // Tab-separated so a paste into Google Sheets lands in real cells.  Values stay
+  // unformatted (no symbols or separators) so Sheets reads them as numbers.
+  const cell=v=>String(v==null?'':v).replace(/[\t\r\n]+/g,' ').trim();
+  const line=cols=>cols.map(cell).join('\t');
+  const num=v=>Math.round((Number(v)||0)*100)/100;
+  const out=[];
+  out.push(line([displaySelectedBrandNames()+' — '+(displayCountries()||'')+' media plan']));
+  out.push(line(['Media code',S.planCode||'-','','Flight',displayFlightRange()]));
+  out.push(line(['Countries',displayCountries()||'-','','Duration',campaignDurationDays()+' days']));
+  out.push(line(['Marketplace',(S.marketplace||'both').toUpperCase(),'','Discount',disc+'%']));
+  out.push('');
+  out.push(line(['Metric','USD','Note']));
+  out.push(line(['Gross budget',Math.round(m.grossBudget),'Before discount']));
+  out.push(line(['Net allocated',Math.round(m.total),pct+'% of net budget']));
+  out.push(line(['Gross value',Math.round(m.grossTotal),disc+'% discount applied']));
+  out.push(line(['Reach spend',Math.round(m.reachSpend),(m.total?Math.round(m.reachSpend/m.total*100):0)+'% of allocation']));
+  out.push(line(['Conversion spend',Math.round(m.convSpend),(m.total?Math.round(m.convSpend/m.total*100):0)+'% of allocation']));
+  out.push(line(['Off-deck spend',Math.round(m.offdeckTotal),'Whole-flight placements']));
+  out.push(line(['Est. views',roundToNearestTen(m.totalViews),'On-deck lines only']));
+  out.push(line(['Effective CPM',m.totalViews?num(m.total/(m.totalViews/1000)):0,'Net cost per 1,000 views']));
+  out.push(line(['Placements',S.rows.length,onDeckCount+' on-deck, '+(S.rows.length-onDeckCount)+' off-deck']));
+  out.push(line(['Net allocated ('+cur+')',Math.round(m.total*fxRate(cur)),'Estimated at current FX']));
+  out.push('');
+  out.push(line(['From','To','Country','Marketplace','Page','Category','Zone','Dimension','Asset / Slot','Slot code','Days','Buy type','Gross rate','Net rate','Est. views','Gross $','Net $','Net '+cur,'Phase','Brand','Note']));
+  S.rows.forEach(r=>{
+    const off=String(r.buyType||'').toUpperCase()==='OFF-DECK';
+    out.push(line([
+      r.from||'', r.to||'', displayCountryCode(r.country), r.marketplace||'',
+      r.page||'', r.category||'', r.zone||'', r.dimension||'',
+      r.asset||'', r.slot_code||'', r.days||0, r.buyType||'',
+      off?'':num(grossRate(r)), off?'':num(netRate(r)), off?'':roundToNearestTen(r.views||0),
+      roundToNearestTen(grossAmount(r)), roundToNearestTen(netAmount(r)),
+      Math.round(netAmount(r)*fxRate(cur)),
+      r.phase||'', r.brand||'', r.note||''
+    ]));
+  });
+  const tsv=out.join('\n');
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(tsv);
+    }else{
+      const area=document.createElement('textarea');
+      area.value=tsv;
+      area.style.position='fixed';
+      area.style.opacity='0';
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand('copy');
+      area.remove();
+    }
+    alert('Plan copied with the summary metrics.\n\nOpen a blank Google Sheet, click cell A1 and paste (Cmd+V / Ctrl+V).');
+  }catch(_){
+    alert('Copy was blocked by the browser. Use Export CSV instead.');
+  }
 }
 
 async function autoLoadPlanFromUrl(){
